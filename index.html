@@ -235,11 +235,41 @@ function vSettings(){
   <label>Reminders while the app is open</label><select onchange="S.settings.notify=this.value==='on';save()"><option value="on" ${S.settings.notify?'selected':''}>On</option><option value="off" ${!S.settings.notify?'selected':''}>Off</option></select>
   <label>Notification text</label><select onchange="S.settings.private=this.value==='private';save()"><option value="private" ${S.settings.private?'selected':''}>Private (no medication names)</option><option value="full" ${!S.settings.private?'selected':''}>Show medication name</option></select>
   <div class="acts"><button class="btn ghost sm" onclick="askNotif()">Notification permission</button></div></div>
+  <div class="card"><b>Phone alerts through Calendar</b><p class="mute">Creates repeating Calendar events with alerts at your reminder times. They work even when LIFEBLOOD is closed. Calendar can't tell if you took a dose, so still record doses here. Re-export after you change your schedule. Text follows your notification privacy setting above.</p><button class="btn red full" onclick="exportCal()">Export to Calendar</button></div>
   <div class="card"><b>Medication list</b><p class="mute">Create a printable summary for your GP or pharmacist.</p><button class="btn red full" onclick="go('summary')">Open medication list</button></div>
   <div class="card"><b>Profile</b><label>Name</label><input value="${esc(S.profile.name)}" onchange="S.profile.name=this.value;save()"><label>Allergies or cautions</label><textarea rows="2" onchange="S.profile.allergies=this.value;save()">${esc(S.profile.allergies)}</textarea></div>
   <div class="card"><b>Privacy</b><p class="mute">All data is stored only in this browser on this device. Nothing is sent anywhere. Clearing browser data or deleting the Home Screen app erases it, and there is no backup.</p><button class="btn ghost full" onclick="wipe()">Delete all my data</button></div>
   <div class="card warn"><b>What this web version can't do</b><p class="mute" style="margin:6px 0 0">It can't send reminders when closed, scan barcodes, look up products, check verified interactions or use Face ID. Those need a native iPhone app and licensed data sources. The app isn't an emergency service: call 000.</p></div>
   <p class="disc">On iPhone: open this page in Safari, tap Share, then Add to Home Screen.</p>`;
+}
+function icsEsc(s){return String(s).replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n')}
+function buildICS(){
+  const pad=n=>String(n).padStart(2,'0'),now=new Date(),BY=['SU','MO','TU','WE','TH','FR','SA'];
+  const stamp=now.getUTCFullYear()+pad(now.getUTCMonth()+1)+pad(now.getUTCDate())+'T'+pad(now.getUTCHours())+pad(now.getUTCMinutes())+pad(now.getUTCSeconds())+'Z';
+  let n=0;const L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//LIFEBLOOD//EN','CALSCALE:GREGORIAN','X-WR-CALNAME:LIFEBLOOD reminders'];
+  S.items.filter(i=>!i.stopped).forEach(i=>{
+    const days=(i.days&&i.days.length)?i.days:[0,1,2,3,4,5,6];
+    let d=new Date((i.start&&i.start>ymd()?i.start:ymd())+'T00:00:00');
+    for(let k=0;k<7&&!days.includes(d.getDay());k++)d.setDate(d.getDate()+1);
+    const ds=ymd(d).replace(/-/g,'');
+    if(i.end&&i.end.replace(/-/g,'')<ds)return;
+    const title=S.settings.private?'Health reminder':i.name+(i.dose?' - '+i.dose:'');
+    (i.times||[]).forEach(t=>{
+      const hm=t.replace(':','');
+      L.push('BEGIN:VEVENT','UID:'+i.id+'-'+hm+'@lifeblood','DTSTAMP:'+stamp,'DTSTART:'+ds+'T'+hm+'00','DURATION:PT15M',
+        'RRULE:FREQ=WEEKLY;BYDAY='+days.map(x=>BY[x]).join(',')+(i.end?';UNTIL='+i.end.replace(/-/g,'')+'T235959':''),
+        'SUMMARY:'+icsEsc(title),'DESCRIPTION:Open LIFEBLOOD to record this dose.','BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:'+icsEsc(title),'TRIGGER:PT0M','END:VALARM','END:VEVENT');n++;
+    });
+  });
+  L.push('END:VCALENDAR');return{text:L.join('\r\n')+'\r\n',count:n};
+}
+async function exportCal(){
+  const{text,count}=buildICS();
+  if(!count){toast('No reminder times to export. Add an item with times first.');return}
+  try{const f=new File([text],'lifeblood-reminders.ics',{type:'text/calendar'});
+    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f]});return}}catch(e){if(e&&e.name==='AbortError')return}
+  try{const u=URL.createObjectURL(new Blob([text],{type:'text/calendar'}));const a=document.createElement('a');a.href=u;a.download='lifeblood-reminders.ics';document.body.appendChild(a);a.click();a.remove();toast('If nothing opened, look for lifeblood-reminders.ics in the Files app.')}
+  catch(e){toast('Export failed in this browser. Try Safari.')}
 }
 function wipe(){if(confirm('Delete everything stored by LIFEBLOOD on this device? This cannot be undone.')){try{localStorage.removeItem('lifeblood_v1')}catch(e){}S={profile:null,items:[],logs:{},settings:{notify:true,private:true,theme:'auto'},symptoms:[]};tab='today';render()}}
 
