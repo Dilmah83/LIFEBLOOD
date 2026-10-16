@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>LIFEBLOOD</title>
+<style>
+:root{--bg:#f6f5f4;--card:#fff;--ink:#23252a;--mute:#6b6f76;--line:#e6e4e2;--red:#a4161a;--green:#1f7a4d;--amber:#b7791f;--tab:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17181b;--card:#222428;--ink:#f1f0ee;--mute:#9a9ea6;--line:#34363b;--red:#e5484d;--green:#4cc38a;--amber:#e5a93d;--tab:#1c1d20;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#17181b;--card:#222428;--ink:#f1f0ee;--mute:#9a9ea6;--line:#34363b;--red:#e5484d;--green:#4cc38a;--amber:#e5a93d;--tab:#1c1d20;color-scheme:dark}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:26px;margin:4px 0 2px;letter-spacing:-.02em}h2{font-size:18px;margin:22px 0 8px}
+.brand{font-weight:800;letter-spacing:.08em;color:var(--red);font-size:13px}
+.mute{color:var(--mute);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;margin:10px 0}
+.row{display:flex;gap:10px;align-items:center;justify-content:space-between}
+.btn{border:0;border-radius:14px;padding:14px 16px;font:600 16px inherit;font-family:inherit;background:var(--ink);color:var(--bg);cursor:pointer;min-height:48px}
+.btn.red{background:var(--red);color:#fff}.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}.btn.sm{padding:8px 12px;min-height:38px;font-size:14px;border-radius:11px}
+.btn.full{width:100%}
+.tag{font-size:12px;font-weight:700;border-radius:20px;padding:3px 9px;background:var(--line);color:var(--ink)}
+.tag.g{background:var(--green);color:#fff}.tag.a{background:var(--amber);color:#fff}.tag.r{background:var(--red);color:#fff}
+.bar{height:10px;border-radius:6px;background:var(--line);overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:var(--green)}
+.warn{border-left:5px solid var(--amber)}.alert{border-left:5px solid var(--red)}
+label{display:block;font-size:13px;font-weight:600;margin:12px 0 4px;color:var(--mute)}
+input,select,textarea{width:100%;font:inherit;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.days{display:flex;gap:6px}.days label{margin:0;flex:1;text-align:center;border:1px solid var(--line);border-radius:10px;padding:10px 0;font-size:14px;color:var(--ink)}
+.days input{display:none}.days input:checked+span{color:var(--red);font-weight:800}
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--tab);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom,0px)}
+nav button{flex:1;border:0;background:none;color:var(--mute);padding:12px 0;font:600 12px inherit;font-family:inherit;cursor:pointer}
+nav button.on{color:var(--red)}nav b{display:block;font-size:20px}
+.acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.acts .btn:first-child{flex:2}
+#toast{position:fixed;left:16px;right:16px;top:calc(12px + env(safe-area-inset-top,0px));background:var(--red);color:#fff;border-radius:14px;padding:12px 14px;display:none;z-index:9}
+.disc{font-size:12.5px;color:var(--mute);margin-top:18px}
+@media print{nav,.noprint,#toast{display:none!important}body{background:#fff;color:#000}.card{border:1px solid #999}}
+</style>
+</head>
+<body>
+<div id="toast"></div>
+<main id="app"></main>
+<nav id="nav"></nav>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const DAYS=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const CATS=['Prescription medication','Over-the-counter medication','Vitamin','Mineral','Dietary supplement','Prescription injection','Other injection','Other health product'];
+let S={profile:null,items:[],logs:{},settings:{notify:true,private:true,theme:'auto'},symptoms:[]};
+let tab='today',edit=null,notified={};
+function load(){try{const r=localStorage.getItem('lifeblood_v1');if(r)S=Object.assign(S,JSON.parse(r))}catch(e){storageOK=false}}
+let storageOK=true;
+function save(){try{localStorage.setItem('lifeblood_v1',JSON.stringify(S))}catch(e){storageOK=false;toast('Could not save. Your browser is blocking storage, so changes will be lost when you close this page.')}}
+function toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>t.style.display='none',5000)}
+const ymd=d=>{d=d||new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+const fmtDate=s=>{if(!s)return '';const[y,m,d]=s.split('-');return `${d}/${m}/${y}`};
+const fmtT=t=>{const[h,m]=t.split(':').map(Number);return `${h%12||12}:${String(m).padStart(2,'0')} ${h<12?'AM':'PM'}`};
+const isInj=i=>/injection/i.test(i.cat);
+function dueOn(date){ // local-date based, so DST and time-zone changes follow the device clock
+  const d=new Date(date+'T00:00:00'),out=[];
+  S.items.filter(i=>!i.stopped).forEach(i=>{
+    if(i.start&&date<i.start)return;if(i.end&&date>i.end)return;
+    if(i.days&&i.days.length&&!i.days.includes(d.getDay()))return;
+    (i.times||[]).forEach(t=>out.push({item:i,time:t,key:i.id+'|'+date+'|'+t,date}));
+  });
+  return out.sort((a,b)=>a.time.localeCompare(b.time));
+}
+function state(d){const l=S.logs[d.key];if(l)return l.status;const due=new Date(d.date+'T'+d.time);return due<new Date()?'overdue':'upcoming'}
+function logDose(key,status,extra){S.logs[key]=Object.assign({status,at:new Date().toISOString()},extra||{});save();render()}
+function adherence(days){let sch=0,tk=0;for(let n=0;n<days;n++){const dt=new Date();dt.setDate(dt.getDate()-n);dueOn(ymd(dt)).forEach(d=>{if(new Date(d.date+'T'+d.time)>new Date())return;sch++;if(S.logs[d.key]?.status==='taken')tk++})}return{sch,tk,pct:sch?Math.round(tk/sch*100):null}}
+
+function render(){
+  document.documentElement.dataset.theme=S.settings.theme==='auto'?'':S.settings.theme;
+  if(!S.profile){return onboarding()}
+  $('#nav').style.display='flex';
+  $('#nav').innerHTML=[['today','◉','Today'],['items','✚','My items'],['check','⚠','Check'],['insights','▤','Insights'],['settings','⚙','Settings']].map(([k,i,l])=>`<button class="${tab===k?'on':''}" onclick="go('${k}')"><b>${i}</b>${l}</button>`).join('');
+  ({today:vToday,items:vItems,form:vForm,check:vCheck,insights:vInsights,settings:vSettings,summary:vSummary})[tab]();
+  window.scrollTo(0,0);
+}
+function go(t){tab=t;if(t!=='form')edit=null;render()}
+
+function onboarding(){
+  $('#nav').style.display='none';
+  $('#app').innerHTML=`<div class="brand" style="margin-top:30px">LIFEBLOOD</div><h1>Take control of your health.</h1>
+  <p class="mute">Track medications, injections, vitamins and supplements, log each dose, and keep a clear history to share with your pharmacist or doctor.</p>
+  <div class="card"><label>What should we call you? (optional)</label><input id="nm" placeholder="Preferred name">
+  <label>Allergies or cautions (optional)</label><textarea id="al" rows="2" placeholder="Anything you want to keep on record"></textarea>
+  <p class="mute">Your time zone is taken from this device: <b>${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}</b>.</p></div>
+  <div class="card warn"><b>Please read</b><p class="mute" style="margin:6px 0 0">LIFEBLOOD is a tracking and information tool. It is not a medical service, does not give medical advice and is not for emergencies. In an emergency call <b>000</b>. Everything you enter stays on this device. The app starts empty: it never adds sample medications.</p></div>
+  <button class="btn red full" onclick="finishOb()">Get started</button>`;
+}
+function finishOb(){S.profile={name:$('#nm').value.trim(),allergies:$('#al').value.trim(),tz:Intl.DateTimeFormat().resolvedOptions().timeZone};save();tab='items';render()}
+
+function vToday(){
+  const date=ymd(),list=dueOn(date),done=list.filter(d=>state(d)==='taken').length,pct=list.length?Math.round(done/list.length*100):0;
+  const h=new Date().getHours(),g=h<12?'Good morning':h<18?'Good afternoon':'Good evening';
+  const w=adherence(7);
+  const refills=S.items.filter(i=>i.refill&&!i.stopped).sort((a,b)=>a.refill.localeCompare(b.refill)).filter(i=>(new Date(i.refill)-new Date())/864e5<=14);
+  const nextInj=nextInjection();
+  $('#app').innerHTML=`<div class="brand">LIFEBLOOD</div><h1>${g}${S.profile.name?', '+esc(S.profile.name):''}</h1>
+  <div class="mute">${new Date().toLocaleDateString('en-AU',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
+  <div class="card"><div class="row"><b>Today's plan</b><span>${list.length?pct+'% done':'Nothing scheduled'}</span></div><div class="bar"><i style="width:${pct}%"></i></div>
+  <div class="mute" style="margin-top:8px">${list.length} scheduled · 7-day adherence ${w.pct===null?'not enough data yet':w.pct+'%'}</div></div>
+  ${notifBanner()}
+  ${refills.map(i=>`<div class="card warn">Refill due ${fmtDate(i.refill)}: <b>${esc(i.name)}</b></div>`).join('')}
+  ${nextInj?`<div class="card">Next injection: <b>${esc(nextInj.item.name)}</b> · ${fmtDate(nextInj.date)} ${fmtT(nextInj.time)}</div>`:''}
+  ${!S.items.length?`<div class="card"><b>Add your first item</b><p class="mute">Enter a medication, vitamin, supplement or injection exactly as prescribed or labelled.</p><button class="btn red full" onclick="go('form')">Add item</button></div>`:''}
+  ${[['Morning',0,12],['Afternoon',12,17],['Evening',17,24]].map(([n,a,b])=>{const g=list.filter(d=>{const hh=+d.time.slice(0,2);return hh>=a&&hh<b});return g.length?`<h2>${n}</h2>`+g.map(doseCard).join(''):''}).join('')}`;
+}
+function doseCard(d){
+  const s=state(d),l=S.logs[d.key],i=d.item;
+  const tag={taken:'<span class="tag g">Taken</span>',skipped:'<span class="tag">Skipped</span>',nottaken:'<span class="tag r">Not taken</span>',overdue:'<span class="tag a">Overdue</span>',upcoming:'<span class="tag">Upcoming</span>'}[s];
+  const open=s==='overdue'||s==='upcoming';
+  return `<div class="card ${s==='overdue'?'warn':''}"><div class="row"><div><b>${esc(i.name)}</b><div class="mute">${esc(i.dose||'Dose not entered')} · ${fmtT(d.time)}</div></div>${tag}</div>
+  ${l&&l.status==='taken'?`<div class="mute">Recorded ${new Date(l.at).toLocaleTimeString('en-AU',{hour:'numeric',minute:'2-digit'})}${l.site?' · site: '+esc(l.site):''}</div>`:''}
+  ${l&&l.note?`<div class="mute">Note: ${esc(l.note)}</div>`:''}
+  ${open?`<div class="acts"><button class="btn red" onclick="takeDose('${d.key}',${isInj(i)})">Mark as taken</button><button class="btn ghost sm" onclick="snooze('${d.key}')">Snooze</button><button class="btn ghost sm" onclick="skipDose('${d.key}','skipped')">Skip</button><button class="btn ghost sm" onclick="skipDose('${d.key}','nottaken')">Not taken</button></div>
+  ${s==='overdue'?`<div class="mute" style="margin-top:8px">For a late dose, follow the product instructions or ask your pharmacist or doctor. Never double up unless they tell you to.</div>`:''}`
+  :`<div class="acts"><button class="btn ghost sm" onclick="undo('${d.key}')">Undo</button></div>`}</div>`;
+}
+function takeDose(key,inj){let site;if(inj){site=prompt('Injection site (optional)','')||''}logDose(key,'taken',inj?{site}:{})}
+function skipDose(key,st){const note=prompt('Reason or note (optional)','')||'';logDose(key,st,{note})}
+function undo(key){delete S.logs[key];save();render()}
+function snooze(key){const m=+(prompt('Snooze for how many minutes?','15'))||0;if(m>0){notified[key]=Date.now()+m*6e4;toast('Snoozed for '+m+' minutes. Reminders only fire while LIFEBLOOD is open.')}}
+function nextInjection(){for(let n=0;n<60;n++){const dt=new Date();dt.setDate(dt.getDate()+n);const x=dueOn(ymd(dt)).find(d=>isInj(d.item)&&!S.logs[d.key]&&new Date(d.date+'T'+d.time)>=new Date());if(x)return x}return null}
+function notifBanner(){
+  if(!S.settings.notify)return '';
+  if(!('Notification' in window))return `<div class="card warn"><b>Reminders limited</b><p class="mute" style="margin:4px 0 0">This browser can't show notifications. Reminders appear only inside the app while it is open.</p></div>`;
+  if(Notification.permission==='granted')return `<div class="card mute">Reminders work while this page is open. This web version can't promise delivery when the app is closed.</div>`;
+  return `<div class="card warn"><b>Notifications are off</b><p class="mute" style="margin:4px 0 8px">Turn them on to be alerted while the app is open. Delivery is not guaranteed on iPhone web apps.</p><button class="btn red sm" onclick="askNotif()">Enable notifications</button></div>`;
+}
+function askNotif(){if(!('Notification' in window)){toast('Notifications not supported here.');return}Notification.requestPermission().then(()=>render())}
+function tick(){ // checks every 30s while open
+  if(!S.profile||!S.settings.notify)return;
+  const now=new Date();dueOn(ymd()).forEach(d=>{
+    if(S.logs[d.key])return;const due=new Date(d.date+'T'+d.time);if(now<due||now-due>6e5&&!notified[d.key])return;
+    if(notified[d.key]&&notified[d.key]>Date.now())return;if(notified[d.key]===true)return;
+    notified[d.key]=true;
+    const txt=S.settings.private?'You have a health item due.':`${d.item.name} due at ${fmtT(d.time)}`;
+    toast(txt+' Open Today to confirm.');
+    try{if('Notification' in window&&Notification.permission==='granted')new Notification('LIFEBLOOD',{body:txt})}catch(e){}
+    if(tab==='today')render();
+  });
+}
+setInterval(tick,30000);
+
+function vItems(){
+  const act=S.items.filter(i=>!i.stopped),old=S.items.filter(i=>i.stopped);
+  const row=i=>`<div class="card"><div class="row"><div><b>${esc(i.name)}</b><div class="mute">${esc(i.cat)} · ${esc(i.dose||'no dose entered')}</div><div class="mute">${(i.times||[]).map(fmtT).join(', ')||'No times'} · ${!i.days||i.days.length===7||!i.days.length?'Every day':i.days.map(d=>DAYS[d]).join(' ')}</div></div></div>
+  ${i.ingredient?`<div class="mute">Active ingredient: ${esc(i.ingredient)}</div>`:''}${i.notes?`<div class="mute">Notes: ${esc(i.notes)}</div>`:''}
+  <div class="acts"><button class="btn ghost sm" onclick="editItem('${i.id}')">Edit</button><button class="btn ghost sm" onclick="stopItem('${i.id}',${!i.stopped})">${i.stopped?'Restart':'Discontinue'}</button><button class="btn ghost sm" onclick="delItem('${i.id}')">Delete</button></div></div>`;
+  $('#app').innerHTML=`<div class="row"><h1>My items</h1><button class="btn red sm" onclick="go('form')">Add</button></div>
+  ${act.length?act.map(row).join(''):'<div class="card mute">Nothing added yet. Tap Add to enter your first medication, vitamin, supplement or injection.</div>'}
+  ${old.length?'<h2>Discontinued</h2>'+old.map(row).join(''):''}
+  <p class="disc">Item details are entered by you and are not verified prescriptions.</p>`;
+}
+function editItem(id){edit=S.items.find(i=>i.id===id);tab='form';render()}
+function stopItem(id,v){const i=S.items.find(x=>x.id===id);i.stopped=v;i.end=v?ymd():'';save();render()}
+function delItem(id){if(confirm('Delete this item? Its dose history is kept for your records.')){S.items=S.items.filter(i=>i.id!==id);save();render()}}
+function vForm(){
+  const i=edit||{times:['08:00'],days:[0,1,2,3,4,5,6],start:ymd()};
+  $('#app').innerHTML=`<h1>${edit?'Edit item':'Add item'}</h1><p class="mute">Enter details exactly as shown on your prescription or the product label. LIFEBLOOD never suggests or changes doses.</p>
+  <div class="card"><label>Name</label><input id="f_name" value="${esc(i.name)}">
+  <label>Category</label><select id="f_cat">${CATS.map(c=>`<option ${i.cat===c?'selected':''}>${c}</option>`).join('')}</select>
+  <label>Active ingredient (if known)</label><input id="f_ing" value="${esc(i.ingredient)}">
+  <label>Dose, as prescribed or labelled (e.g. 1 capsule, 500 mg)</label><input id="f_dose" value="${esc(i.dose)}">
+  <label>Route</label><select id="f_route">${['Oral','Topical','Injection','Other'].map(c=>`<option ${i.route===c?'selected':''}>${c}</option>`).join('')}</select>
+  <label>Times (24-hour, comma separated)</label><input id="f_times" value="${esc((i.times||[]).join(', '))}" placeholder="07:00, 19:00">
+  <label>Days</label><div class="days">${DAYS.map((d,n)=>`<label><input type="checkbox" class="dchk" value="${n}" ${(i.days||[]).includes(n)?'checked':''}><span>${d}</span></label>`).join('')}</div>
+  <label>Start date</label><input type="date" id="f_start" value="${esc(i.start)}">
+  <label>End date (optional)</label><input type="date" id="f_end" value="${esc(i.end)}">
+  <label>Prescriber (optional)</label><input id="f_pres" value="${esc(i.prescriber)}">
+  <label>Reason (optional)</label><input id="f_reason" value="${esc(i.reason)}">
+  <label>Food or special instructions (from your label or clinician)</label><textarea id="f_notes" rows="2">${esc(i.notes)}</textarea>
+  <label>Next refill date (optional)</label><input type="date" id="f_refill" value="${esc(i.refill)}"></div>
+  <button class="btn red full" onclick="saveItem()">Save item</button><button class="btn ghost full" style="margin-top:8px" onclick="go('items')">Cancel</button>`;
+}
+function saveItem(){
+  const name=$('#f_name').value.trim();if(!name){toast('Enter a name.');return}
+  const times=$('#f_times').value.split(',').map(t=>t.trim()).filter(Boolean);
+  if(times.some(t=>!/^([01]?\d|2[0-3]):[0-5]\d$/.test(t))){toast('Times must look like 07:00 or 19:30.');return}
+  const norm=times.map(t=>t.padStart(5,'0'));
+  const days=[...document.querySelectorAll('.dchk:checked')].map(c=>+c.value);
+  const o={id:edit?edit.id:'i'+Date.now(),name,cat:$('#f_cat').value,ingredient:$('#f_ing').value.trim(),dose:$('#f_dose').value.trim(),route:$('#f_route').value,times:norm,days:days.length?days:[0,1,2,3,4,5,6],start:$('#f_start').value,end:$('#f_end').value,prescriber:$('#f_pres').value.trim(),reason:$('#f_reason').value.trim(),notes:$('#f_notes').value.trim(),refill:$('#f_refill').value,stopped:edit?.stopped};
+  const dup=S.items.find(x=>x.id!==o.id&&!x.stopped&&((x.name.toLowerCase()===name.toLowerCase())||(o.ingredient&&x.ingredient&&x.ingredient.toLowerCase()===o.ingredient.toLowerCase())));
+  if(dup&&!confirm(`"${dup.name}" is already in your list with the same name or active ingredient. Add this one anyway?`))return;
+  if(!norm.length&&!confirm('No times entered, so no reminders will be created. Save anyway?'))return;
+  if(edit)Object.assign(edit,o);else S.items.push(o);
+  save();edit=null;tab='items';render();toast('Saved. Reminders are set for the times you entered.');
+}
+
+function vCheck(){
+  const act=S.items.filter(i=>!i.stopped),groups={};
+  act.forEach(i=>{const k=(i.ingredient||'').toLowerCase();if(k)(groups[k]=groups[k]||[]).push(i)});
+  const dups=Object.values(groups).filter(g=>g.length>1);
+  const noIng=act.filter(i=>!i.ingredient);
+  $('#app').innerHTML=`<h1>Interaction check</h1>
+  <div class="card alert"><b>Preliminary screening only</b><p class="mute" style="margin:6px 0 0">No medical interaction database is connected yet. This screen only finds repeated active ingredients you entered. It does <b>not</b> check drug, supplement or food interactions, and a clear result does not mean your combination is safe.</p></div>
+  <h2>Repeated active ingredients</h2>
+  ${dups.length?dups.map(g=>`<div class="card warn"><span class="tag a">Possible duplication</span><p style="margin:8px 0 4px"><b>${g.map(x=>esc(x.name)).join(' + ')}</b> share the ingredient "${esc(g[0].ingredient)}".</p><div class="mute">Next step: ask your pharmacist or prescriber whether this is intended before changing anything.</div></div>`).join(''):'<div class="card mute">No repeated ingredients found among the items you entered.</div>'}
+  ${noIng.length?`<div class="card mute">${noIng.length} item(s) have no active ingredient entered, so they could not be screened: ${noIng.map(i=>esc(i.name)).join(', ')}.</div>`:''}
+  <h2>Before you change anything</h2><div class="card mute">Never start, stop or change a medicine based on this app. For a full interaction review, ask your pharmacist. For severe symptoms such as trouble breathing, swelling of the face or collapse, call <b>000</b>.</div>
+  <p class="disc">To add verified interaction data later, a licensed clinical database or the TGA/Healthdirect sources would need to be connected through a secure backend.</p>`;
+}
+
+function vInsights(){
+  const w7=adherence(7),w30=adherence(30);
+  const bars=[...Array(7)].map((_,n)=>{const dt=new Date();dt.setDate(dt.getDate()-(6-n));const ds=ymd(dt),l=dueOn(ds).filter(d=>new Date(d.date+'T'+d.time)<=new Date()),t=l.filter(d=>S.logs[d.key]?.status==='taken').length;return{d:DAYS[dt.getDay()],p:l.length?Math.round(t/l.length*100):null}});
+  const hist=Object.entries(S.logs).sort((a,b)=>b[1].at.localeCompare(a[1].at)).slice(0,25);
+  const nm=k=>S.items.find(i=>i.id===k.split('|')[0])?.name||'Deleted item';
+  const injs=Object.entries(S.logs).filter(([k,l])=>l.status==='taken'&&S.items.find(i=>i.id===k.split('|')[0]&&isInj(i))).sort((a,b)=>b[1].at.localeCompare(a[1].at)).slice(0,10);
+  $('#app').innerHTML=`<h1>Insights</h1>
+  <div class="card"><div class="row"><span>Last 7 days</span><b>${w7.pct===null?'–':w7.pct+'%'}</b></div><div class="row"><span>Last 30 days</span><b>${w30.pct===null?'–':w30.pct+'%'}</b></div><div class="mute" style="margin-top:6px">Share of scheduled doses you recorded as taken. This is not a measure of how well a treatment is working.</div></div>
+  <div class="card"><div style="display:flex;gap:6px;align-items:flex-end;height:90px">${bars.map(b=>`<div style="flex:1;text-align:center"><div style="height:${b.p===null?3:Math.max(3,b.p*.7)}px;background:${b.p===null?'var(--line)':'var(--green)'};border-radius:5px"></div><div class="mute" style="font-size:11px">${b.d}</div></div>`).join('')}</div></div>
+  <h2>Injection history</h2>${injs.length?injs.map(([k,l])=>`<div class="card">${esc(nm(k))} · ${new Date(l.at).toLocaleString('en-AU')}${l.site?' · '+esc(l.site):''}</div>`).join(''):'<div class="card mute">No injections recorded yet.</div>'}
+  <h2>Dose history</h2>${hist.length?hist.map(([k,l])=>{const[,date,time]=k.split('|');return `<div class="card"><div class="row"><div><b>${esc(nm(k))}</b><div class="mute">Scheduled ${fmtDate(date)} ${fmtT(time)}<br>Recorded ${new Date(l.at).toLocaleString('en-AU')}${l.note?'<br>Note: '+esc(l.note):''}</div></div><span class="tag ${l.status==='taken'?'g':l.status==='nottaken'?'r':''}">${{taken:'Taken',skipped:'Skipped',nottaken:'Not taken'}[l.status]}</span></div></div>`}).join(''):'<div class="card mute">No doses recorded yet.</div>'}
+  <h2>Symptom notes</h2><div class="card"><input id="sy" placeholder="What did you notice?"><div class="acts noprint"><button class="btn ghost sm" onclick="addSym()">Save note</button></div><div class="mute">Notes are observations only. They don't show that anything caused them.</div></div>
+  ${(S.symptoms||[]).slice().reverse().slice(0,10).map(s=>`<div class="card mute">${new Date(s.at).toLocaleString('en-AU')} · ${esc(s.t)}</div>`).join('')}`;
+}
+function addSym(){const t=$('#sy').value.trim();if(!t)return;S.symptoms=S.symptoms||[];S.symptoms.push({t,at:new Date().toISOString()});save();render()}
+
+function summaryText(){
+  const a=S.items.filter(i=>!i.stopped);
+  return `LIFEBLOOD medication list\nGenerated ${new Date().toLocaleDateString('en-AU')}\n${S.profile.name?'Name: '+S.profile.name+'\n':''}${S.profile.allergies?'Allergies/cautions: '+S.profile.allergies+'\n':''}\n`+a.map(i=>`- ${i.name} (${i.cat}); ${i.dose||'dose not entered'}; ${i.route}; ${(i.times||[]).map(fmtT).join(', ')}; ${i.days.length===7?'every day':i.days.map(d=>DAYS[d]).join(' ')}${i.prescriber?'; prescriber: '+i.prescriber:''}${i.notes?'; notes: '+i.notes:''}`).join('\n')+'\n\nEntered by the user. Not a verified prescription.';
+}
+function vSummary(){
+  $('#app').innerHTML=`<h1>Medication list</h1><div class="card" style="white-space:pre-wrap">${esc(summaryText())}</div>
+  <div class="acts noprint"><button class="btn red" onclick="window.print()">Print or save as PDF</button><button class="btn ghost" onclick="copySum()">Copy text</button><button class="btn ghost" onclick="go('settings')">Back</button></div>`;
+}
+function copySum(){navigator.clipboard.writeText(summaryText()).then(()=>toast('Copied.'),()=>toast('Copy was blocked. Use Print instead.'))}
+
+function vSettings(){
+  $('#app').innerHTML=`<h1>Settings</h1>
+  <div class="card"><label style="margin-top:0">Appearance</label><select onchange="S.settings.theme=this.value;save();render()">${['auto','light','dark'].map(t=>`<option ${S.settings.theme===t?'selected':''}>${t}</option>`).join('')}</select>
+  <label>Reminders while the app is open</label><select onchange="S.settings.notify=this.value==='on';save()"><option value="on" ${S.settings.notify?'selected':''}>On</option><option value="off" ${!S.settings.notify?'selected':''}>Off</option></select>
+  <label>Notification text</label><select onchange="S.settings.private=this.value==='private';save()"><option value="private" ${S.settings.private?'selected':''}>Private (no medication names)</option><option value="full" ${!S.settings.private?'selected':''}>Show medication name</option></select>
+  <div class="acts"><button class="btn ghost sm" onclick="askNotif()">Notification permission</button></div></div>
+  <div class="card"><b>Medication list</b><p class="mute">Create a printable summary for your GP or pharmacist.</p><button class="btn red full" onclick="go('summary')">Open medication list</button></div>
+  <div class="card"><b>Profile</b><label>Name</label><input value="${esc(S.profile.name)}" onchange="S.profile.name=this.value;save()"><label>Allergies or cautions</label><textarea rows="2" onchange="S.profile.allergies=this.value;save()">${esc(S.profile.allergies)}</textarea></div>
+  <div class="card"><b>Privacy</b><p class="mute">All data is stored only in this browser on this device. Nothing is sent anywhere. Clearing browser data or deleting the Home Screen app erases it, and there is no backup.</p><button class="btn ghost full" onclick="wipe()">Delete all my data</button></div>
+  <div class="card warn"><b>What this web version can't do</b><p class="mute" style="margin:6px 0 0">It can't send reminders when closed, scan barcodes, look up products, check verified interactions or use Face ID. Those need a native iPhone app and licensed data sources. The app isn't an emergency service: call 000.</p></div>
+  <p class="disc">On iPhone: open this page in Safari, tap Share, then Add to Home Screen.</p>`;
+}
+function wipe(){if(confirm('Delete everything stored by LIFEBLOOD on this device? This cannot be undone.')){try{localStorage.removeItem('lifeblood_v1')}catch(e){}S={profile:null,items:[],logs:{},settings:{notify:true,private:true,theme:'auto'},symptoms:[]};tab='today';render()}}
+
+load();render();
+if(!storageOK)setTimeout(()=>toast('Storage is unavailable here. Your data will not be saved between visits.'),300);
+</script>
+</body>
+</html>
