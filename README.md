@@ -1,0 +1,17 @@
+# LIFEBLOOD
+
+Static medication tracker. Open `index.html` or serve it over HTTPS. Data stays in browser storage; medicine label searches send the entered search term to api.fda.gov.
+
+## Calendar export
+
+Settings → Export to Calendar opens/downloads one `.ics` file containing all active scheduled reminders. Open it and confirm Add / Import in your calendar app. A visible file link remains available if automatic opening is blocked. Google Calendar web imports files through Settings → Import & export. A browser cannot silently add events to the device calendar; final import and alert permissions belong to the calendar app. iPhone/iPad use a calendar preview link; if the Home Screen app cannot open it, use Safari. Actual iOS import requires device verification.
+
+Exports respect selected weekdays, start/end dates, discontinued items and notification privacy. Re-export after changing schedules; check previously imported events because calendar apps vary in their handling of duplicate UIDs and updates.
+
+## Medicine information
+
+My items → Medicine info & side effects → Find medicine information. Confirm the matching product before viewing uses, side effects, warnings, contraindications and interactions from its published US FDA label. Some labels lack sections. US products can differ from Australian medicines; the view also links to Healthdirect for Australian information. No matching result does not imply a product is safe. This is general product information, not a personalised interaction check.
+
+## Validation
+
+Run `python tests/smoke.py` with Playwright and Chromium installed at `/usr/bin/chromium`. Tests mock FDA responses and cover label rendering, HTML escaping, no results, offline errors, calendar download, privacy, recurrence, expired/discontinued items and UTF-8 line folding. A live FDA ibuprofen lookup was also checked during development. Native iPhone Calendar import is not automated by this test.
