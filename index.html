@@ -74,7 +74,7 @@ function render(){
   if(!S.profile){return onboarding()}
   $('#nav').style.display='flex';
   $('#nav').innerHTML=[['today','◉','Today'],['items','✚','My items'],['check','⚠','Check'],['insights','▤','Insights'],['settings','⚙','Settings']].map(([k,i,l])=>`<button class="${tab===k?'on':''}" onclick="go('${k}')"><b>${i}</b>${l}</button>`).join('');
-  ({today:vToday,items:vItems,form:vForm,check:vCheck,insights:vInsights,settings:vSettings,summary:vSummary})[tab]();
+  ({today:vToday,items:vItems,form:vForm,check:vCheck,insights:vInsights,settings:vSettings,summary:vSummary,medicine:vMedicine})[tab]();
   window.scrollTo(0,0);
 }
 function go(t){tab=t;if(t!=='form')edit=null;render()}
@@ -148,7 +148,7 @@ function vItems(){
   const act=S.items.filter(i=>!i.stopped),old=S.items.filter(i=>i.stopped);
   const row=i=>`<div class="card"><div class="row"><div><b>${esc(i.name)}</b><div class="mute">${esc(i.cat)} · ${esc(i.dose||'no dose entered')}</div><div class="mute">${(i.times||[]).map(fmtT).join(', ')||'No times'} · ${!i.days||i.days.length===7||!i.days.length?'Every day':i.days.map(d=>DAYS[d]).join(' ')}</div></div></div>
   ${i.ingredient?`<div class="mute">Active ingredient: ${esc(i.ingredient)}</div>`:''}${i.notes?`<div class="mute">Notes: ${esc(i.notes)}</div>`:''}
-  <div class="acts"><button class="btn ghost sm" onclick="editItem('${i.id}')">Edit</button><button class="btn ghost sm" onclick="stopItem('${i.id}',${!i.stopped})">${i.stopped?'Restart':'Discontinue'}</button><button class="btn ghost sm" onclick="delItem('${i.id}')">Delete</button></div></div>`;
+  <div class="acts"><button class="btn ghost sm" onclick="showMedicine('${i.id}')">Medicine info &amp; side effects</button><button class="btn ghost sm" onclick="editItem('${i.id}')">Edit</button><button class="btn ghost sm" onclick="stopItem('${i.id}',${!i.stopped})">${i.stopped?'Restart':'Discontinue'}</button><button class="btn ghost sm" onclick="delItem('${i.id}')">Delete</button></div></div>`;
   $('#app').innerHTML=`<div class="row"><h1>My items</h1><button class="btn red sm" onclick="go('form')">Add</button></div>
   ${act.length?act.map(row).join(''):'<div class="card mute">Nothing added yet. Tap Add to enter your first medication, vitamin, supplement or injection.</div>'}
   ${old.length?'<h2>Discontinued</h2>'+old.map(row).join(''):''}
@@ -187,6 +187,52 @@ function saveItem(){
   if(!norm.length&&!confirm('No times entered, so no reminders will be created. Save anyway?'))return;
   if(edit)Object.assign(edit,o);else S.items.push(o);
   save();edit=null;tab='items';render();toast('Saved. Reminders are set for the times you entered.');
+}
+
+let medicineId=null,medicineLabels=[],medicineRequest=0;
+function showMedicine(id){medicineId=id;medicineLabels=[];medicineRequest++;go('medicine')}
+function vMedicine(){
+  const i=S.items.find(x=>x.id===medicineId);
+  if(!i){go('items');return}
+  const term=i.ingredient||i.name;
+  $('#app').innerHTML=`<button class="btn ghost sm" onclick="go('items')">Back to My items</button><h1>${esc(i.name)}</h1>
+  <div class="card"><b>Medicine information &amp; side effects</b><p class="mute">Search published US FDA labels by name or active ingredient. Check the product name, ingredient and route before reading: Australian brands, supplements and some medicines may not be listed. Your Australian Consumer Medicine Information (CMI) leaflet or pharmacist is the best source for your exact product.</p>
+  <label for="medicineQuery">Medicine name or active ingredient</label><input id="medicineQuery" value="${esc(term)}" maxlength="120">
+  <p class="mute">Lookup sends only this search term to the US FDA, not your profile or dose history.</p><button id="medicineLookup" class="btn red full" onclick="lookupMedicine()">Find medicine information</button>
+  <p><a href="https://www.healthdirect.gov.au/medicines?search=${encodeURIComponent(term)}" target="_blank" rel="noopener noreferrer">Find Australian medicine information (Healthdirect)</a></p></div>
+  <div id="medicineResults" aria-live="polite"></div>
+  <p class="disc">Information does not cover every possible side effect or interaction. Never change treatment based on this app. For trouble breathing, swelling of the face or collapse, call 000.</p>`;
+}
+async function lookupMedicine(){
+  const query=$('#medicineQuery').value.trim();if(!query){toast('Enter a medicine name or active ingredient.');return}
+  const request=++medicineRequest,button=$('#medicineLookup'),results=$('#medicineResults');
+  button.disabled=true;button.textContent='Looking up…';results.textContent='Searching published medicine labels…';medicineLabels=[];
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),15000);
+  try{
+    // Strip query operators so user input stays a literal name search.
+    const name=query.replace(/[^\p{L}\p{N} \-]/gu,' ').replace(/\s+/g,' ').trim();
+    if(!name)throw new Error('Enter a medicine name using letters or numbers.');
+    const search=`openfda.brand_name:"${name}" OR openfda.generic_name:"${name}" OR openfda.substance_name:"${name}"`;
+    const response=await fetch('https://api.fda.gov/drug/label.json?search='+encodeURIComponent(search)+'&limit=10',{signal:controller.signal,credentials:'omit',referrerPolicy:'no-referrer'});
+    if(request!==medicineRequest||tab!=='medicine')return;
+    if(response.status===404){results.textContent='No matching label found. Try the active ingredient or use Healthdirect above for your Australian product.';return}
+    if(!response.ok)throw new Error('Medicine information is temporarily unavailable. Try again or use Healthdirect above.');
+    const data=await response.json();if(request!==medicineRequest||tab!=='medicine')return;
+    medicineLabels=Array.isArray(data.results)?data.results:[];
+    results.innerHTML=medicineLabels.length?'<h2>Confirm your product</h2><p class="mute">Results may include different strengths or formulations. Choose only a label matching your medicine.</p>'+medicineLabels.map((label,n)=>{
+      const f=label.openfda||{};
+      return `<div class="card"><b>${esc((f.brand_name||f.generic_name||['Medicine label']).join(', '))}</b><p class="mute">Ingredient: ${esc((f.generic_name||f.substance_name||['Not supplied']).join(', '))}<br>Route: ${esc((f.route||['Not supplied']).join(', '))}<br>Manufacturer: ${esc((f.manufacturer_name||['Not supplied']).join(', '))}</p><button class="btn ghost full" onclick="readMedicineLabel(${n})">View uses, side effects &amp; warnings</button></div>`;
+    }).join(''):'No matching label found. Try Healthdirect above.';
+  }catch(e){if(request===medicineRequest&&tab==='medicine')results.textContent=e.name==='AbortError'?'Lookup timed out. Try again or use Healthdirect above.':e.message==='Failed to fetch'?'Could not connect. Check your internet connection or use Healthdirect above.':e.message}
+  finally{clearTimeout(timeout);if(request===medicineRequest&&tab==='medicine'){button.disabled=false;button.textContent='Find medicine information'}}
+}
+function readMedicineLabel(n){
+  const label=medicineLabels[n];if(!label)return;
+  const sections=[['Uses',['indications_and_usage','purpose']],['Side effects',['adverse_reactions']],['Warnings',['boxed_warning','warnings_and_cautions','warnings']],['When not to use',['contraindications']],['Interactions',['drug_interactions']]];
+  $('#medicineResults').innerHTML=`<h2>${esc((label.openfda?.brand_name||label.openfda?.generic_name||['Medicine label']).join(', '))}</h2><p class="mute">Source: US FDA published product label. Label date: ${esc(label.effective_time||'Not supplied')}. US labelling may differ from your Australian product.</p>`+sections.map(([title,keys])=>{
+    const text=keys.flatMap(key=>Array.isArray(label[key])?label[key]:[]).join('\n\n');
+    return `<details class="card" ${title==='Side effects'?'open':''}><summary><b>${title}</b></summary><div style="white-space:pre-wrap;overflow-wrap:anywhere;margin-top:10px">${esc(text||'Not provided in this label. Check your product leaflet or ask your pharmacist.')}</div></details>`;
+  }).join('')+'<button class="btn ghost full" onclick="lookupMedicine()">Back to matching products</button>';
 }
 
 function vCheck(){
@@ -235,14 +281,19 @@ function vSettings(){
   <label>Reminders while the app is open</label><select onchange="S.settings.notify=this.value==='on';save()"><option value="on" ${S.settings.notify?'selected':''}>On</option><option value="off" ${!S.settings.notify?'selected':''}>Off</option></select>
   <label>Notification text</label><select onchange="S.settings.private=this.value==='private';save()"><option value="private" ${S.settings.private?'selected':''}>Private (no medication names)</option><option value="full" ${!S.settings.private?'selected':''}>Show medication name</option></select>
   <div class="acts"><button class="btn ghost sm" onclick="askNotif()">Notification permission</button></div></div>
-  <div class="card"><b>Phone alerts through Calendar</b><p class="mute">Creates repeating Calendar events with alerts at your reminder times. They work even when LIFEBLOOD is closed. Calendar can't tell if you took a dose, so still record doses here. Re-export after you change your schedule. Text follows your notification privacy setting above.</p><button class="btn red full" onclick="exportCal()">Export to Calendar</button></div>
+  <div class="card"><b>Phone alerts through Calendar</b><p class="mute">Creates repeating Calendar events with alerts at your reminder times. They work even when LIFEBLOOD is closed. Calendar can't tell if you took a dose, so still record doses here. Re-export after you change your schedule. Text follows your notification privacy setting above.</p><button class="btn red full" onclick="exportCal()">Export to Calendar</button><div id="calendarHelp" role="status" class="mute" style="margin-top:10px"></div></div>
   <div class="card"><b>Medication list</b><p class="mute">Create a printable summary for your GP or pharmacist.</p><button class="btn red full" onclick="go('summary')">Open medication list</button></div>
   <div class="card"><b>Profile</b><label>Name</label><input value="${esc(S.profile.name)}" onchange="S.profile.name=this.value;save()"><label>Allergies or cautions</label><textarea rows="2" onchange="S.profile.allergies=this.value;save()">${esc(S.profile.allergies)}</textarea></div>
-  <div class="card"><b>Privacy</b><p class="mute">All data is stored only in this browser on this device. Nothing is sent anywhere. Clearing browser data or deleting the Home Screen app erases it, and there is no backup.</p><button class="btn ghost full" onclick="wipe()">Delete all my data</button></div>
-  <div class="card warn"><b>What this web version can't do</b><p class="mute" style="margin:6px 0 0">It can't send reminders when closed, scan barcodes, look up products, check verified interactions or use Face ID. Those need a native iPhone app and licensed data sources. The app isn't an emergency service: call 000.</p></div>
+  <div class="card"><b>Privacy</b><p class="mute">All data is stored only in this browser on this device. Medicine lookups send only the medicine name or active ingredient to the US FDA. Opening external medicine resources also sends your search term to that service. Your profile and dose history stay here. Clearing browser data or deleting the Home Screen app erases it, and there is no backup.</p><button class="btn ghost full" onclick="wipe()">Delete all my data</button></div>
+  <div class="card warn"><b>What this web version can't do</b><p class="mute" style="margin:6px 0 0">It can't send reminders when closed, scan barcodes, check verified interactions or use Face ID. Those need a native iPhone app and licensed data sources. The app isn't an emergency service: call 000.</p></div>
   <p class="disc">On iPhone: open this page in Safari, tap Share, then Add to Home Screen.</p>`;
 }
-function icsEsc(s){return String(s).replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n')}
+function icsEsc(s){return String(s).replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\r\n|\r|\n/g,'\\n')}
+function foldICS(line){
+  const encoder=new TextEncoder();let out='',width=0;
+  for(const char of line){const bytes=encoder.encode(char).length;if(width+bytes>75){out+='\r\n ';width=1}out+=char;width+=bytes}
+  return out;
+}
 function buildICS(){
   const pad=n=>String(n).padStart(2,'0'),now=new Date(),BY=['SU','MO','TU','WE','TH','FR','SA'];
   const stamp=now.getUTCFullYear()+pad(now.getUTCMonth()+1)+pad(now.getUTCDate())+'T'+pad(now.getUTCHours())+pad(now.getUTCMinutes())+pad(now.getUTCSeconds())+'Z';
@@ -261,15 +312,29 @@ function buildICS(){
         'SUMMARY:'+icsEsc(title),'DESCRIPTION:Open LIFEBLOOD to record this dose.','BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:'+icsEsc(title),'TRIGGER:PT0M','END:VALARM','END:VEVENT');n++;
     });
   });
-  L.push('END:VCALENDAR');return{text:L.join('\r\n')+'\r\n',count:n};
+  L.push('END:VCALENDAR');return{text:L.map(foldICS).join('\r\n')+'\r\n',count:n};
 }
-async function exportCal(){
+function downloadCalendar(text){
+  const url=URL.createObjectURL(new Blob([text],{type:'text/calendar;charset=utf-8'}));
+  const a=document.createElement('a');a.href=url;
+  // Safari on iPhone/iPad can preview the calendar directly; other browsers download it.
+  const ios=/iPad|iPhone|iPod/.test(navigator.userAgent)||navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1;
+  if(!ios)a.download='lifeblood-reminders.ics';
+  a.textContent='Open calendar file';
+  const help=$('#calendarHelp');
+  if(help){help.replaceChildren(a);help.append(document.createTextNode(ios?' → tap Add All in Calendar. If opened from the Home Screen, use Safari if Calendar is unavailable.':' → open the downloaded file and confirm Add / Import in your calendar app. Google Calendar on the web: Settings → Import & export → Import.'));}
+  else document.body.appendChild(a);
+  a.click();
+  // Keep the visible link usable if the browser blocks the automatic opening.
+  if(downloadCalendar.url)URL.revokeObjectURL(downloadCalendar.url);
+  downloadCalendar.url=url;
+  if(!help){a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000)}
+}
+function exportCal(){
   const{text,count}=buildICS();
   if(!count){toast('No reminder times to export. Add an item with times first.');return}
-  try{const f=new File([text],'lifeblood-reminders.ics',{type:'text/calendar'});
-    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f]});return}}catch(e){if(e&&e.name==='AbortError')return}
-  try{const u=URL.createObjectURL(new Blob([text],{type:'text/calendar'}));const a=document.createElement('a');a.href=u;a.download='lifeblood-reminders.ics';document.body.appendChild(a);a.click();a.remove();toast('If nothing opened, look for lifeblood-reminders.ics in the Files app.')}
-  catch(e){toast('Export failed in this browser. Try Safari.')}
+  try{downloadCalendar(text);toast('Open the calendar file, then confirm Add / Import. Calendar controls the final confirmation.');}
+  catch(e){toast('Calendar export failed. Try opening LIFEBLOOD in Safari or Chrome.');}
 }
 function wipe(){if(confirm('Delete everything stored by LIFEBLOOD on this device? This cannot be undone.')){try{localStorage.removeItem('lifeblood_v1')}catch(e){}S={profile:null,items:[],logs:{},settings:{notify:true,private:true,theme:'auto'},symptoms:[]};tab='today';render()}}
 
