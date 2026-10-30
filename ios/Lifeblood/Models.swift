@@ -77,6 +77,8 @@ struct TakenDose: Codable, Identifiable {
     var note = ""
 }
 struct PatientProfile: Codable {
+    var name = ""
+    var allergies = ""
     var age: Int?
     var sex = "Not supplied"
     var pregnancy = "Not supplied"

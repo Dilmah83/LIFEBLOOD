@@ -3,6 +3,7 @@ import Foundation
 // The app has no provider secret. A configured HTTPS backend must use licensed structured
 // product data; search transmits only the query, never a patient profile or regimen.
 struct ProductService {
+    var configuration: URLSessionConfiguration = .ephemeral
     enum LookupError: LocalizedError {
         case unavailable(String)
         var errorDescription: String? { if case .unavailable(let message) = self { return message }; return nil }
@@ -25,7 +26,9 @@ struct ProductService {
         var url = URLComponents(url: base.appendingPathComponent("products"), resolvingAgainstBaseURL: false)!
         url.queryItems = [URLQueryItem(name: "q", value: String(query.prefix(120))), URLQueryItem(name: "jurisdiction", value: "AU")]
         var request = URLRequest(url: url.url!); request.timeoutInterval = 15; request.cachePolicy = .reloadIgnoringLocalCacheData
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let session = URLSession(configuration: configuration, delegate: RejectRedirects(), delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw LookupError.unavailable("Provider unavailable or rate limited. No live result was substituted; try again or enter manually.")
         }
@@ -58,7 +61,9 @@ extension ProductService {
         }
         let payload = ClinicalRequest(products: eligible.map { ClinicalProduct(id: $0.product.id, quantity: $0.quantity, unit: $0.unit, weekdays: $0.weekdays, times: $0.times, asNeeded: $0.asNeeded) })
         var request = URLRequest(url: base.appendingPathComponent("check")); request.httpMethod = "POST"; request.httpBody = try JSONEncoder().encode(payload); request.setValue("application/json", forHTTPHeaderField: "Content-Type"); request.timeoutInterval = 20
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let session = URLSession(configuration: configuration, delegate: RejectRedirects(), delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, response) = try await session.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200, data.count < 2_000_000 else { throw LookupError.unavailable("Clinical service unavailable or rate limited. No comprehensive check performed.") }
         let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
         let result = try decoder.decode(ClinicalResult.self, from: data)
@@ -67,5 +72,12 @@ extension ProductService {
                   ["Urgent review", "Review", "Information"].contains(finding.severity) && ["Documented", "Theoretical", "Limited evidence"].contains(finding.evidence) && !finding.consequence.isEmpty && !finding.advice.isEmpty && !finding.spacing.isEmpty && !finding.sources.isEmpty && finding.sources.allSatisfy { $0.url.scheme == "https" && $0.url.host != nil && $0.url.user == nil && $0.url.password == nil && !$0.stale }
               }) else { throw LookupError.unavailable("Clinical result missing current evidence or coverage. Local limited checks only.") }
         return result
+    }
+}
+
+// Never redirect product queries or sensitive regimen payloads to a different endpoint.
+final class RejectRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }

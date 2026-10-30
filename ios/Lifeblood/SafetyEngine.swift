@@ -1,6 +1,7 @@
 import Foundation
 
 struct SafetyEngine {
+    static func rank(_ severity: String) -> Int { ["Urgent review": 0, "Review": 1, "Information": 2][severity] ?? 3 }
     static let coverage = "Limited mode: checks entered ingredient duplicates and calculable intake only. Drug, supplement, food, alcohol, absorption, overlapping therapeutic effects and individual dose-limit checks require a clinical provider. No interactions identified in the sources checked does not establish safety."
     static func totals(_ entries: [(Product, Decimal, DoseUnit)]) -> (totals: [IngredientTotal], missing: [String]) {
         var result: [String: IngredientTotal] = [:]
@@ -42,7 +43,7 @@ struct SafetyEngine {
         for item in active where !item.product.verified || item.product.ingredients.isEmpty || item.product.sources.contains(where: \.stale) || !item.product.conflicts.isEmpty {
             output.append(Finding(id: "incomplete:\(item.id)", title: "Product information needs review", products: [item.product.brand], ingredients: item.product.ingredients.map(\.name), consequence: "Unverified, missing, stale or conflicting product data limits screening.", severity: "Information", evidence: "Incomplete", advice: "Confirm the exact pack and current Australian PI/CMI with your pharmacist.", spacing: "Not assessed.", sources: item.product.sources))
         }
-        return output.sorted { $0.severity == "Review" && $1.severity != "Review" }
+        return output.sorted { rank($0.severity) < rank($1.severity) }
     }
     static func recommendations(profile: PatientProfile, items: [RegimenItem]) -> [Recommendation] {
         if profile.diet == "Vegan" {

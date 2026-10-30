@@ -113,6 +113,8 @@ final class SafetyTests: XCTestCase {
         XCTAssertEqual(store.archive.items.first?.weekdays, [2, 4])
         XCTAssertEqual(store.archive.items.first?.times, ["08:00", "20:00"])
         XCTAssertEqual(store.archive.doses.count, 1)
+        XCTAssertNotNil(store.archive.doses[0].scheduledAt)
+        XCTAssertEqual(store.archive.profile.name, "private")
         XCTAssertTrue(store.archive.items[0].product.ingredients.isEmpty)
         XCTAssertEqual(store.archive.items[0].legacyDose, "0.5 mL")
         XCTAssertThrowsError(try store.restore(data))

@@ -1,8 +1,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import EventKit
+import UserNotifications
+import UIKit
 
 @main struct LifebloodApp: App {
+    @UIApplicationDelegateAdaptor(NotificationDelegate.self) private var notifications
     @StateObject private var store = Store()
     @Environment(\.scenePhase) private var phase
     var body: some Scene {
@@ -11,6 +14,7 @@ import EventKit
 }
 struct RootView: View {
     @EnvironmentObject var store: Store
+    @State private var errorDismissed = false
     var body: some View {
         TabView {
             NavigationStack { TodayView() }.tabItem { Label("Today", systemImage: "calendar") }
@@ -18,7 +22,7 @@ struct RootView: View {
             NavigationStack { SafetyView() }.tabItem { Label("Safety", systemImage: "exclamationmark.shield") }
             NavigationStack { VitaminsView() }.tabItem { Label("Consider", systemImage: "leaf") }
             NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gear") }
-        }.tint(.red).alert("Record storage needs attention", isPresented: Binding(get: { store.error != nil }, set: { _ in })) {
+        }.tint(.red).alert("Record storage needs attention", isPresented: Binding(get: { store.error != nil && !errorDismissed }, set: { if !$0 { errorDismissed = true } })) {
             Button("Keep records unchanged", role: .cancel) {}
         } message: { Text(store.error ?? "") }
     }
@@ -313,7 +317,7 @@ struct SafetyView: View {
                     Text("Checked " + result.checked.formatted())
                     if !result.complete { Label("Incomplete coverage", systemImage: "exclamationmark.triangle") }
                     if result.findings.isEmpty { Text("No interactions identified in the sources checked. This does not establish safety for an individual.") }
-                    ForEach(result.findings) { finding in
+                    ForEach(result.findings.sorted { SafetyEngine.rank($0.severity) < SafetyEngine.rank($1.severity) }) { finding in
                         DisclosureGroup(finding.severity + ": " + finding.title) {
                             Text(finding.products.joined(separator: " + "))
                             Text(finding.ingredients.joined(separator: ", "))
@@ -390,6 +394,8 @@ struct ProfileView: View {
     var body: some View {
         Form {
             Text("Optional. Stored on this device; not sent with product searches.")
+            TextField("Name (optional)", text: $profile.name)
+            TextField("Allergies / cautions", text: $profile.allergies, axis: .vertical)
             TextField("Age in years", text: $age).keyboardType(.numberPad)
             Picker("Sex", selection: $profile.sex) { ForEach(["Not supplied", "Female", "Male", "Other"], id: \.self) { Text($0) } }
             Picker("Pregnancy / breastfeeding", selection: $profile.pregnancy) { ForEach(["Not supplied", "Neither", "Pregnant", "Breastfeeding", "Pregnant and breastfeeding"], id: \.self) { Text($0) } }
@@ -432,8 +438,9 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Records") {
+                if let error = store.error { Text(error).foregroundStyle(.red) }
                 ShareLink("Share medication summary with pharmacist / doctor", item: store.summary)
-                Button("Export full native backup") { do { exportData = try JSONEncoder().encode(store.archive); exporting = true } catch { message = error.localizedDescription } }
+                Button("Export full native backup") { do { legacyExport = false; exportData = try JSONEncoder().encode(store.archive); exporting = true } catch { message = error.localizedDescription } }
                 Button("Import existing LIFEBLOOD archive (empty tracker only)") { importing = true }.disabled(!store.archive.items.isEmpty || !store.archive.doses.isEmpty || store.archive.legacyJSON != nil)
                 if let data = store.archive.legacyJSON { Button("Export preserved browser archive") { exportData = data; legacyExport = true; exporting = true } }
                 Text(store.importReport)
@@ -495,5 +502,15 @@ struct SettingsView: View {
             for event in generated where !desired.contains(event.url?.absoluteString ?? "") { try ek.remove(event, span: .thisEvent, commit: false) }
             try ek.commit(); message = "Exported \(desired.count) reminders for the next 60 days. Review in Calendar."
         } catch { ek.reset(); message = "Calendar export failed: \(error.localizedDescription)" }
+    }
+}
+
+final class NotificationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
     }
 }
