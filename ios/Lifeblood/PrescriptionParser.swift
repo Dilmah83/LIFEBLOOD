@@ -4,7 +4,7 @@ struct PrescriptionLine: Sendable {
     let text: String
     let confidence: Float
 }
-struct PrescriptionDraft: Identifiable {
+struct PrescriptionDraft: Identifiable, Equatable {
     let id = UUID()
     var name: String
     var strength = ""
@@ -83,9 +83,9 @@ enum PrescriptionParser {
                         else { drafts[0].unit = .mL }
                     }
                     if line.confidence < 0.85 { drafts[0].quantity = ""; drafts[0].asNeeded = false; drafts[0].warnings.append("Directions have low recognition confidence. Dose and as-needed status require manual entry.") }
-                    if !matches(#"\b(?:by mouth|orally)\b"#, in: clause).isEmpty { drafts[0].route = "Oral" }
-                    else if !matches(#"\bsubcutaneously\b"#, in: clause).isEmpty { drafts[0].route = "Subcutaneous" }
-                    else if !matches(#"\bintramuscularly\b"#, in: clause).isEmpty { drafts[0].route = "Intramuscular" }
+                    if line.confidence >= 0.85, !matches(#"\b(?:by mouth|orally)\b"#, in: clause).isEmpty { drafts[0].route = "Oral" }
+                    else if line.confidence >= 0.85, !matches(#"\bsubcutaneously\b"#, in: clause).isEmpty { drafts[0].route = "Subcutaneous" }
+                    else if line.confidence >= 0.85, !matches(#"\bintramuscularly\b"#, in: clause).isEmpty { drafts[0].route = "Intramuscular" }
                 }
             } else { drafts[0].warnings.append("Directions are missing or ambiguous. No dose quantity was assigned.") }
         } else if drafts.count > 1 {

@@ -66,6 +66,7 @@ struct PrescriptionDocumentCamera: UIViewControllerRepresentable {
             var pages: [Data] = []
             for index in 0..<scan.pageCount {
                 guard let data = scan.imageOfPage(at: index).jpegData(compressionQuality: 0.9) else { completion(.failure(PrescriptionOCR.ScanError.unreadable)); return }
+                guard pages.reduce(0, { $0 + $1.count }) + data.count <= 30_000_000 else { completion(.failure(PrescriptionOCR.ScanError.tooLarge)); return }
                 pages.append(data)
             }
             completion(.success(pages))
@@ -189,7 +190,7 @@ struct PrescriptionReviewView: View {
     var body: some View {
         Form {
             Section("Correct the recognised text") {
-                TextField("Medicine name only — no patient details", text: $draft.name)
+                TextField("Medicine name only — no patient details", text: $draft.name).autocorrectionDisabled().textInputAutocapitalization(.never)
                 TextField("Strength exactly as written", text: $draft.strength)
                 TextField("Formulation", text: $draft.formulation)
                 TextField("Route — leave blank if unclear", text: $draft.route)
@@ -211,7 +212,6 @@ struct PrescriptionReviewView: View {
                 }
             }
         }.navigationTitle("Review scanned medicine")
-        .onChange(of: draft.name) { _, _ in confirmed = false }
-        .onChange(of: draft.strength) { _, _ in confirmed = false }
+        .onChange(of: draft) { _, _ in confirmed = false }
     }
 }

@@ -315,7 +315,7 @@ struct ProductEditor: View {
         let p = sourceProduct
         name = p?.brand ?? initialName; generic = p?.generic ?? ""; strength = p?.strength ?? ""; formulation = p?.formulation ?? ""; route = p?.route ?? "Oral"; ingredients = p?.ingredients ?? []; unit = p?.ingredients.first?.productUnit ?? .tablet
         if let scanned = prescriptionDraft, item == nil {
-            if p == nil { name = scanned.name; strength = scanned.strength; formulation = scanned.formulation; route = scanned.route }
+            if p == nil { name = initialName.isEmpty ? scanned.name : initialName; strength = scanned.strength; formulation = scanned.formulation; route = scanned.route }
             quantity = scanned.quantity; unit = scanned.unit; prn = scanned.asNeeded; instructions = scanned.directions
             times = ""; days = []
         }

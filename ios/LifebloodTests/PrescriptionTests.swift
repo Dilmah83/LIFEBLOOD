@@ -67,9 +67,10 @@ final class PrescriptionTests: XCTestCase {
         }
     }
     func testLowConfidenceDoesNotPopulateDoseOrPRN() {
-        let result = read("Fixture 5 mg tablets\nTake 1 tablet as needed", confidence: 0.6)
+        let result = read("Fixture 5 mg tablets\nTake 1 tablet as needed by mouth", confidence: 0.6)
         XCTAssertTrue(result.drafts[0].quantity.isEmpty)
         XCTAssertFalse(result.drafts[0].asNeeded)
+        XCTAssertTrue(result.drafts[0].route.isEmpty)
         XCTAssertTrue(result.drafts[0].warnings.contains { $0.contains("Low-confidence") })
     }
     func testIdentityHeadersNeverBecomeMedicineDraftsOrDirections() {
