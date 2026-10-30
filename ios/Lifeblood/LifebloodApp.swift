@@ -94,9 +94,11 @@ struct DoseLogView: View {
 struct ItemsView: View {
     @EnvironmentObject var store: Store
     @State private var adding = false
+    @State private var scanning = false
     var body: some View {
         List {
             Button { adding = true } label: { Label("Add medication or supplement", systemImage: "plus") }
+            Button { scanning = true } label: { Label("Scan prescription photo", systemImage: "doc.viewfinder") }
             ForEach(store.archive.items) { item in
                 NavigationLink { ProductDetail(item: item) } label: {
                     VStack(alignment: .leading) {
@@ -108,10 +110,14 @@ struct ItemsView: View {
                     }
                 }
             }
-        }.navigationTitle("Your products").sheet(isPresented: $adding) { NavigationStack { SearchView() } }
+        }.navigationTitle("Your products")
+        .sheet(isPresented: $adding) { NavigationStack { SearchView() } }
+        .sheet(isPresented: $scanning) { NavigationStack { PrescriptionScannerView() } }
     }
 }
 struct SearchView: View {
+    var initialQuery = ""
+    var prescriptionDraft: PrescriptionDraft? = nil
     @AppStorage("productEndpoint") private var endpoint = ""
     @State private var query = ""
     @AppStorage("productSearchConsent") private var consent = false
@@ -136,15 +142,16 @@ struct SearchView: View {
                 Text(message).font(.footnote)
             }
             ForEach(results) { product in
-                NavigationLink { ConfirmationView(product: product) } label: { Text(product.display) }
+                NavigationLink { ConfirmationView(product: product, prescriptionDraft: prescriptionDraft) } label: { Text(product.display) }
             }
             Section("No exact match?") {
-                NavigationLink("Enter manually — unverified") { ProductEditor(item: nil, selected: nil, initialName: query) }
+                NavigationLink("Enter manually — unverified") { ProductEditor(item: nil, selected: nil, initialName: query, prescriptionDraft: prescriptionDraft) }
                 Link("Australian PI and CMI search (TGA)", destination: URL(string: "https://www.tga.gov.au/resources/artg")!)
                 Link("Australian medicine information (Healthdirect)", destination: URL(string: "https://www.healthdirect.gov.au/medicines")!)
                 Text("Do not choose a brand match without confirming all ingredients, strength, formulation and route on the pack.")
             }
         }.navigationTitle("Find a product")
+        .onAppear { if query.isEmpty { query = initialQuery } }
         .onChange(of: query) { _, _ in generation = UUID(); results = []; searching = false }
         .onChange(of: endpoint) { _, _ in generation = UUID(); results = []; searching = false }
         .onChange(of: consent) { _, allowed in if !allowed { generation = UUID(); results = []; searching = false } }
@@ -174,12 +181,13 @@ struct SearchView: View {
 }
 struct ConfirmationView: View {
     let product: Product
+    var prescriptionDraft: PrescriptionDraft? = nil
     @State private var confirmed = false
     var body: some View {
         List {
             ProductInformation(product: product)
             Toggle("I checked the exact pack, all ingredients, strength, formulation and route", isOn: $confirmed)
-            if confirmed { NavigationLink("Enter prescribed or labelled dose") { ProductEditor(item: nil, selected: product) } }
+            if confirmed { NavigationLink("Enter prescribed or labelled dose") { ProductEditor(item: nil, selected: product, prescriptionDraft: prescriptionDraft) } }
         }.navigationTitle("Confirm product")
     }
 }
@@ -229,6 +237,7 @@ struct ProductEditor: View {
     let item: RegimenItem?
     let selected: Product?
     var initialName = ""
+    var prescriptionDraft: PrescriptionDraft? = nil
     @State private var name = ""
     @State private var generic = ""
     @State private var strength = ""
@@ -250,6 +259,14 @@ struct ProductEditor: View {
     var sourceProduct: Product? { selected ?? item?.product }
     var body: some View {
         Form {
+            if let scanned = prescriptionDraft {
+                Section("Populated from prescription — unverified") {
+                    Text("Scanned medicine: " + scanned.name)
+                    Text("Scanned strength: " + (scanned.strength.isEmpty ? "Not readable" : scanned.strength))
+                    Text("Compare these with the exact product below. Do not accept a different product or strength just because its name matches. Ask your pharmacist about discrepancies.")
+                    Text("Enter reminder times and days explicitly. Nothing from the photo has been saved yet.")
+                }
+            }
             Section("Exact product") {
                 TextField("Brand / product name", text: $name)
                 TextField("Generic names", text: $generic)
@@ -297,9 +314,15 @@ struct ProductEditor: View {
     func populate() {
         let p = sourceProduct
         name = p?.brand ?? initialName; generic = p?.generic ?? ""; strength = p?.strength ?? ""; formulation = p?.formulation ?? ""; route = p?.route ?? "Oral"; ingredients = p?.ingredients ?? []; unit = p?.ingredients.first?.productUnit ?? .tablet
+        if let scanned = prescriptionDraft, item == nil {
+            if p == nil { name = scanned.name; strength = scanned.strength; formulation = scanned.formulation; route = scanned.route }
+            quantity = scanned.quantity; unit = scanned.unit; prn = scanned.asNeeded; instructions = scanned.directions
+            times = ""; days = []
+        }
         if let item { quantity = String(describing: item.quantity); unit = item.unit; times = item.times.joined(separator: ", "); days = Set(item.weekdays); start = item.start; hasEnd = item.end != nil; end = item.end ?? item.start; prn = item.asNeeded; instructions = item.instructions }
     }
     func saveItem() {
+        guard prescriptionDraft?.reviewed != false else { error = "Review the recognised prescription fields before saving."; return }
         let schedule = times.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty, let amount = Decimal(string: quantity), amount > 0,
               ingredients.allSatisfy({ !$0.name.trimmingCharacters(in: .whitespaces).isEmpty && $0.amount > 0 && $0.per > 0 }),
@@ -316,6 +339,10 @@ struct ProductEditor: View {
             return value
         }
         if !unchanged { p.verified = false }
+        if prescriptionDraft != nil && selected == nil {
+            p.verified = false
+            if !p.missing.contains("Created from user-reviewed photo text; product details and ingredients are not independently verified.") { p.missing.append("Created from user-reviewed photo text; product details and ingredients are not independently verified.") }
+        }
         var next = item ?? RegimenItem(product: p)
         next.product = p; next.quantity = amount; next.unit = unit; next.asNeeded = prn; next.times = prn ? [] : Array(Set(schedule)).sorted(); next.weekdays = days.sorted(); next.start = start; next.end = hasEnd ? end : nil; next.instructions = instructions; next.legacyDose = nil
         store.upsert(next); saved = store.error == nil

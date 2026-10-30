@@ -34,3 +34,9 @@ jobs:
       - name: Validate provider contract and failure modes
         working-directory: server
         run: python3 -m unittest -v
+  prescription-parser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test the actual Swift prescription parser
+        run: swift test --package-path ios

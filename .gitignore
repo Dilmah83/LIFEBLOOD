@@ -5,3 +5,6 @@ DerivedData/
 TestResults.xcresult/
 xcuserdata/
 .env
+
+.build/
+.swiftpm/

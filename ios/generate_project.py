@@ -51,7 +51,7 @@ project = obj('project', dict(isa='PBXProject', attributes=dict(LastUpgradeCheck
 folder = root / 'Lifeblood.xcodeproj'
 folder.mkdir(exist_ok=True)
 (folder / 'project.pbxproj').write_text('// !$*UTF8*$!\n' + render(dict(archiveVersion=1, classes={}, objectVersion=56, objects=objects, rootObject=project)) + '\n')
-info = dict(CFBundleDevelopmentRegion='$(DEVELOPMENT_LANGUAGE)', CFBundleExecutable='$(EXECUTABLE_NAME)', CFBundleIdentifier='$(PRODUCT_BUNDLE_IDENTIFIER)', CFBundleInfoDictionaryVersion='6.0', CFBundleName='$(PRODUCT_NAME)', CFBundlePackageType='APPL', CFBundleShortVersionString='1.0', CFBundleVersion='1', CFBundleDisplayName='LIFEBLOOD', UILaunchScreen={}, UIApplicationSceneManifest={'UIApplicationSupportsMultipleScenes': False}, NSCalendarsFullAccessUsageDescription='Export reminders you choose to your calendar.', UISupportedInterfaceOrientations=['UIInterfaceOrientationPortrait'])
+info = dict(CFBundleDevelopmentRegion='$(DEVELOPMENT_LANGUAGE)', CFBundleExecutable='$(EXECUTABLE_NAME)', CFBundleIdentifier='$(PRODUCT_BUNDLE_IDENTIFIER)', CFBundleInfoDictionaryVersion='6.0', CFBundleName='$(PRODUCT_NAME)', CFBundlePackageType='APPL', CFBundleShortVersionString='1.0', CFBundleVersion='1', CFBundleDisplayName='LIFEBLOOD', UILaunchScreen={}, UIApplicationSceneManifest={'UIApplicationSupportsMultipleScenes': False}, NSCalendarsFullAccessUsageDescription='Export reminders you choose to your calendar.', NSCameraUsageDescription='Photograph your prescription to recognise its text on this iPhone. Review all details before saving.', UISupportedInterfaceOrientations=['UIInterfaceOrientationPortrait'])
 (root / 'Info.plist').write_bytes(plistlib.dumps(info))
 schemes = folder / 'xcshareddata' / 'xcschemes'
 schemes.mkdir(parents=True, exist_ok=True)

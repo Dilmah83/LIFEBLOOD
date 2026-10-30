@@ -17,6 +17,7 @@ targets:
         CFBundleDisplayName: LIFEBLOOD
         UILaunchScreen: {}
         NSCalendarsFullAccessUsageDescription: Export reminders you choose to your calendar.
+        NSCameraUsageDescription: Photograph your prescription to recognise its text on this iPhone. Review all details before saving.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: au.lifeblood.tracker
