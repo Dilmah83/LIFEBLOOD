@@ -97,4 +97,56 @@ final class ProviderTests: XCTestCase {
         let data = try encoded(result); FixtureProtocol.reply = { _ in (200, data) }
         do { _ = try await service.check([RegimenItem(product: product("Fixture"))], endpoint: "https://medical.example.org"); XCTFail("Stale check must not be presented as current") } catch {}
     }
+    func testDefaultSearchWorksWithoutBackendAndKeepsFormulationsDistinct() async throws {
+        let fixture = #"{"results":[{"finished":false,"product_ndc":"raw-material","generic_name":"Fixture raw material","dosage_form":"GRANULE"},{"finished":true,"product_ndc":"test-tablet","brand_name":"Fixture Brand","generic_name":"Fixture ingredient","dosage_form":"TABLET, FILM COATED","route":["ORAL"],"active_ingredients":[{"name":"FIXTURE A","strength":"500 mg/1"},{"name":"FIXTURE B","strength":"5 mg/1"}]},{"finished":true,"product_ndc":"test-injection","brand_name":"Fixture Brand","generic_name":"Fixture ingredient","dosage_form":"INJECTION, SOLUTION","route":["SUBCUTANEOUS"],"active_ingredients":[{"name":"FIXTURE A","strength":"10 mg/mL"}]}]}"#
+        FixtureProtocol.reply = { request in
+            XCTAssertEqual(request.url?.host, "api.fda.gov")
+            XCTAssertEqual(request.url?.path, "/drug/ndc.json")
+            XCTAssertNil(request.httpBody)
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            return (200, Data(fixture.utf8))
+        }
+        let products = try await service.search("Fixture Brand", endpoint: "")
+        XCTAssertEqual(products.count, 2)
+        XCTAssertEqual(products[0].ingredients.count, 2)
+        XCTAssertEqual(products[0].ingredients[0].amount, 500)
+        XCTAssertEqual(products[0].ingredients[0].productUnit, .tablet)
+        XCTAssertEqual(products[1].ingredients[0].productUnit, .mL)
+        XCTAssertEqual(products[1].ingredients[0].delivered(quantity: Decimal(string: "0.5")!, unit: .mL), 5)
+        XCTAssertNotEqual(products[0].id, products[1].id)
+        XCTAssertTrue(products.allSatisfy { !$0.verified && $0.sources.first?.jurisdiction == "US" })
+    }
+    func testUnknownStrengthDoesNotProducePartialCombinationTotals() async throws {
+        let fixture = #"{"results":[{"finished":true,"product_ndc":"test","brand_name":"Fixture","dosage_form":"TABLET","route":["ORAL"],"active_ingredients":[{"name":"FIXTURE A","strength":"5 mg/1"},{"name":"FIXTURE B","strength":"1 %"}]}]}"#
+        FixtureProtocol.reply = { _ in (200, Data(fixture.utf8)) }
+        let products = try await service.search("Fixture", endpoint: "")
+        XCTAssertEqual(products.count, 1)
+        XCTAssertTrue(products[0].ingredients.isEmpty)
+        XCTAssertTrue(products[0].strength.contains("FIXTURE B: 1 %"))
+        XCTAssertTrue(products[0].missing.contains { $0.contains("fully interpreted") })
+    }
+    func testPublicNoResultsAndRateLimitAreDifferent() async throws {
+        FixtureProtocol.reply = { _ in (404, Data()) }
+        let products = try await service.search("Missing Fixture", endpoint: "")
+        XCTAssertTrue(products.isEmpty)
+        FixtureProtocol.reply = { _ in (429, Data()) }
+        do { _ = try await service.search("Fixture", endpoint: ""); XCTFail("Rate limit must be an error, not an empty result") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("rate limited")) }
+    }
+    func testConfiguredProviderFailureNeverSilentlySearchesUSDirectory() async {
+        FixtureProtocol.reply = { request in
+            XCTAssertEqual(request.url?.host, "medical.example.org")
+            return (503, Data())
+        }
+        do { _ = try await service.search("Fixture", endpoint: "https://medical.example.org"); XCTFail("Must preserve provider failure") } catch {}
+    }
+    func testDirectoryStrengthParserDoesNotInventConcentrationOrConvertIU() {
+        XCTAssertNil(ProductService.directoryIngredient(.init(name: "Fixture", strength: "500 mg"), formulation: "INJECTION"))
+        XCTAssertNil(ProductService.directoryIngredient(.init(name: "Fixture", strength: "100 IU/1"), formulation: "TABLET"))
+        XCTAssertNil(ProductService.directoryIngredient(.init(name: "Fixture", strength: "5 mg/1"), formulation: "INJECTION"))
+        let micrograms = ProductService.directoryIngredient(.init(name: "Fixture", strength: "250 mcg/1"), formulation: "CAPSULE")
+        XCTAssertEqual(micrograms?.unit, .microgram)
+        XCTAssertEqual(micrograms?.productUnit, .capsule)
+    }
+
 }

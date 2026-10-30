@@ -99,8 +99,8 @@ final class SafetyTests: XCTestCase {
         XCTAssertTrue(suggestion.nextStep.contains("do not add another product"))
         XCTAssertTrue(suggestion.missing.contains("No dose recommendation"))
     }
-    func testLookupWithoutProviderFailsHonestly() async {
-        do { _ = try await ProductService().search("Ambiguous brand", endpoint: ""); XCTFail("Should not return mock products") }
+    func testInvalidProviderConfigurationFailsHonestly() async {
+        do { _ = try await ProductService().search("Ambiguous brand", endpoint: "http://insecure.example.org"); XCTFail("Should not return mock products") }
         catch { XCTAssertTrue(error.localizedDescription.contains("Manual entry remains unverified")) }
     }
     @MainActor func testLegacyMigrationPreservesCalendarScheduleAndOriginalArchive() throws {

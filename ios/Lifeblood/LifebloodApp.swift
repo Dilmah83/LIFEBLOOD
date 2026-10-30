@@ -114,18 +114,25 @@ struct ItemsView: View {
 struct SearchView: View {
     @AppStorage("productEndpoint") private var endpoint = ""
     @State private var query = ""
-    @State private var consent = false
+    @AppStorage("productSearchConsent") private var consent = false
     @State private var results: [Product] = []
-    @State private var message = "Search is unavailable until a secure medical product backend is configured in Settings."
+    @State private var message = "Enter at least two letters and allow product-name searches. No API key is needed for the public directory."
     @State private var searching = false
     @State private var generation = UUID()
+    @State private var lastSignature = ""
+    var signature: String { endpoint + "|" + query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var usesPublicDirectory: Bool { endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var body: some View {
         List {
-            Section("Australian products first") {
-                TextField("Brand or generic name", text: $query).textInputAutocapitalization(.never)
-                Toggle("Send this product search to the configured medical provider", isOn: $consent)
-                Text("Only the search term is sent. Your identity, medication list and health profile are not sent. Provider details: \(endpoint.isEmpty ? "not configured" : endpoint)").font(.caption)
-                Button(searching ? "Searching…" : "Search products") { Task { await search() } }.disabled(!consent || query.trimmingCharacters(in: .whitespaces).isEmpty || searching)
+            Section(usesPublicDirectory ? "Public product search — US directory" : "Australian medical provider") {
+                TextField("Brand or generic name", text: $query).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search).onSubmit { if consent { Task { await search() } } }
+                Toggle("Allow product-name searches", isOn: $consent)
+                Text("Only the search term is sent. Your identity, medication list and health profile are not sent. Provider details: \(usesPublicDirectory ? "US FDA public National Drug Code directory (api.fda.gov)" : endpoint)").font(.caption)
+                Button(searching ? "Searching…" : "Search products") { Task { await search() } }.disabled(!consent || query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
+                if usesPublicDirectory {
+                    Text("US products only. Australian brands, ingredients and strengths can differ. Vitamins and supplements may not be listed. Confirm every detail against your own pack; results are not Australian product verification.").font(.footnote)
+                }
+                if !consent { Text("Turn on Allow product-name searches above to search.").font(.footnote) }
                 Text(message).font(.footnote)
             }
             ForEach(results) { product in
@@ -137,16 +144,32 @@ struct SearchView: View {
                 Link("Australian medicine information (Healthdirect)", destination: URL(string: "https://www.healthdirect.gov.au/medicines")!)
                 Text("Do not choose a brand match without confirming all ingredients, strength, formulation and route on the pack.")
             }
-        }.navigationTitle("Find a product").onChange(of: query) { _, _ in generation = UUID(); results = [] }.onDisappear { generation = UUID() }
+        }.navigationTitle("Find a product")
+        .onChange(of: query) { _, _ in generation = UUID(); results = []; searching = false }
+        .onChange(of: endpoint) { _, _ in generation = UUID(); results = []; searching = false }
+        .onChange(of: consent) { _, allowed in if !allowed { generation = UUID(); results = []; searching = false } }
+        .task(id: signature + "|" + String(consent)) {
+            guard consent, query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
+            do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
+            guard !Task.isCancelled, !searching, lastSignature != signature else { return }
+            await search()
+        }
+        .onDisappear { generation = UUID(); searching = false }
     }
     @MainActor func search() async {
-        let request = UUID(); generation = request; searching = true
+        guard consent, query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
+        let request = UUID(); generation = request; searching = true; lastSignature = signature
+        message = "Searching published product records…"
         do {
             let products = try await ProductService().search(query, endpoint: endpoint)
-            guard generation == request else { searching = false; return }
-            results = products; message = products.isEmpty ? "No exact product found. Manual entry is unverified." : "Choose your exact product. Ambiguous names are never merged."
-        } catch { if generation == request { message = error.localizedDescription; results = [] } }
-        searching = false
+            guard generation == request else { return }
+            results = products
+            message = products.isEmpty ? "No product found in the directory checked. Australian-only products and supplements may be absent. Try the generic name, open the Australian sources below, or enter manually." : "Choose your exact product, strength and formulation. Different products with similar names remain separate."
+        } catch {
+            guard generation == request else { return }
+            if !Task.isCancelled { message = "Lookup failed: " + error.localizedDescription + " You can retry or enter manually."; results = [] }
+        }
+        if generation == request { searching = false }
     }
 }
 struct ConfirmationView: View {
@@ -273,7 +296,7 @@ struct ProductEditor: View {
     }
     func populate() {
         let p = sourceProduct
-        name = p?.brand ?? initialName; generic = p?.generic ?? ""; strength = p?.strength ?? ""; formulation = p?.formulation ?? ""; route = p?.route ?? "Oral"; ingredients = p?.ingredients ?? []
+        name = p?.brand ?? initialName; generic = p?.generic ?? ""; strength = p?.strength ?? ""; formulation = p?.formulation ?? ""; route = p?.route ?? "Oral"; ingredients = p?.ingredients ?? []; unit = p?.ingredients.first?.productUnit ?? .tablet
         if let item { quantity = String(describing: item.quantity); unit = item.unit; times = item.times.joined(separator: ", "); days = Set(item.weekdays); start = item.start; hasEnd = item.end != nil; end = item.end ?? item.start; prn = item.asNeeded; instructions = item.instructions }
     }
     func saveItem() {
@@ -453,8 +476,12 @@ struct SettingsView: View {
                 Text("Calendar export is explicit. Re-export uses stable identifiers to avoid duplicates in the selected calendar. Existing browser-imported events are preserved and may need manual review. Calendar alerts cannot know whether you took a dose.").font(.caption)
             }
             Section("Medical data provider") {
-                TextField("HTTPS product backend base URL", text: $endpoint).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL).onChange(of: endpoint) { _, _ in Task { await store.recheckClinical() } }
-                Text("No provider is configured by default. Use a trusted deployment with appropriately licensed Australian product information. Only a product search term is transmitted after consent. The optional clinical check requires a licensed provider adapter. Nutrient-limit and personalised recommendation services are not connected in this build. Do not enter API keys here.")
+                TextField("Optional Australian provider HTTPS URL", text: $endpoint).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL).onChange(of: endpoint) { _, _ in Task { await store.recheckClinical() } }
+                if !endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button("Remove custom backend and use public product search") { endpoint = "" }
+                    Text("Removing the custom backend also makes its clinical checks unavailable.").font(.caption)
+                }
+                Text("The public US FDA directory works without setup. An optional trusted backend can supply appropriately licensed Australian product information. Only a product search term is transmitted after consent. The optional clinical check requires a licensed provider adapter. Nutrient-limit and personalised recommendation services are not connected in this build. Do not enter API keys here.")
             }
             Section("Optional third-party clinical processing") {
                 Toggle("Allow automatic clinical checks", isOn: $clinicalConsent)

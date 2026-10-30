@@ -20,6 +20,9 @@ struct ProductService {
         }
     }
     func search(_ query: String, endpoint: String) async throws -> [Product] {
+        if endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return try await searchPublicProducts(query)
+        }
         guard let base = URL(string: endpoint), base.scheme == "https", base.host != nil, base.user == nil, base.password == nil else {
             throw LookupError.unavailable("No secure product provider configured. Australian product research and autocomplete are unavailable. Manual entry remains unverified.")
         }
@@ -79,5 +82,93 @@ extension ProductService {
 final class RejectRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
+    }
+}
+
+// Public, keyless structured product directory. US results are never represented as
+// Australian products or a clinical interaction check. A configured AU provider is
+// never silently replaced if that provider fails.
+extension ProductService {
+    struct NDCDirectory: Decodable {
+        let results: [NDCProduct]
+    }
+    struct NDCProduct: Decodable {
+        let product_ndc: String?
+        let finished: Bool?
+        let brand_name: String?
+        let generic_name: String?
+        let dosage_form: String?
+        let route: [String]?
+        let labeler_name: String?
+        let active_ingredients: [NDCIngredient]?
+    }
+    struct NDCIngredient: Decodable {
+        let name: String
+        let strength: String?
+    }
+    func searchPublicProducts(_ query: String) async throws -> [Product] {
+        let name = String(query.prefix(120)).unicodeScalars.map { scalar -> String in
+            CharacterSet.alphanumerics.contains(scalar) || scalar.value == 45 || scalar.value == 32 ? String(scalar) : " "
+        }.joined().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        guard name.count >= 2 else { throw LookupError.unavailable("Enter at least two letters or numbers of the brand or generic name.") }
+        var url = URLComponents(string: "https://api.fda.gov/drug/ndc.json")!
+        url.queryItems = [URLQueryItem(name: "search", value: "brand_name:\"\(name)\" OR generic_name:\"\(name)\""), URLQueryItem(name: "limit", value: "20")]
+        var request = URLRequest(url: url.url!); request.timeoutInterval = 15; request.cachePolicy = .reloadIgnoringLocalCacheData
+        let session = URLSession(configuration: configuration, delegate: RejectRedirects(), delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw LookupError.unavailable("Could not connect to the public product directory. Try again or enter manually.") }
+        if http.statusCode == 404 { return [] }
+        guard http.statusCode == 200 else {
+            throw LookupError.unavailable(http.statusCode == 429 ? "The FDA product directory is rate limited. Try again shortly or enter manually." : "The FDA product directory is unavailable. Try again or enter manually.")
+        }
+        guard data.count < 2_000_000 else { throw LookupError.unavailable("Product response was too large. Refine your search.") }
+        let rows = try JSONDecoder().decode(NDCDirectory.self, from: data).results
+        guard rows.count <= 20 else { throw LookupError.unavailable("Too many results. Refine your search.") }
+        var seen = Set<String>()
+        let products: [Product] = rows.compactMap { row in
+            guard row.finished == true, let ndc = row.product_ndc, !ndc.isEmpty, seen.insert(ndc).inserted,
+                  let formulation = row.dosage_form, !formulation.isEmpty,
+                  let routes = row.route, !routes.isEmpty,
+                  let brand = row.brand_name ?? row.generic_name, !brand.isEmpty else { return nil }
+            let raw = row.active_ingredients ?? []
+            let parsed = raw.compactMap { Self.directoryIngredient($0, formulation: formulation) }
+            let complete = !raw.isEmpty && parsed.count == raw.count
+            var sourceURL = URLComponents(string: "https://api.fda.gov/drug/ndc.json")!
+            sourceURL.queryItems = [URLQueryItem(name: "search", value: "product_ndc:\"\(ndc)\"")]
+            var missing = ["US directory entry; not verified against your Australian pack. A directory listing does not establish FDA approval.", "The directory does not supply PI/CMI, side-effect classification, individual suitability or comprehensive interactions.", "Manufacturer / labeler: " + (row.labeler_name ?? "Not supplied")]
+            if !complete { missing.append("Structured ingredient amounts could not be fully interpreted. No ingredient totals will be calculated until every ingredient and strength basis is confirmed manually.") }
+            let strengths = raw.map { $0.name + ": " + ($0.strength ?? "strength not supplied") }.joined(separator: "; ")
+            return Product(id: "fda-ndc:" + ndc, brand: brand, generic: row.generic_name ?? "Not supplied", strength: strengths.isEmpty ? "Strength not supplied" : strengths, formulation: formulation, route: routes.joined(separator: ", "), ingredients: complete ? parsed : [], verified: false, sources: [EvidenceSource(id: "fda-ndc:" + ndc, title: "US FDA National Drug Code directory — " + ndc, url: sourceURL.url!, checked: Date(), jurisdiction: "US")], missing: missing)
+        }
+        try products.forEach(Self.validate)
+        return products
+    }
+    static func directoryIngredient(_ raw: NDCIngredient, formulation: String) -> Ingredient? {
+        // Only explicit mass/unit or mass/volume expressions are recognised. No IU
+        // conversion, percentage conversion or inferred injection concentration.
+        guard let strength = raw.strength, raw.name.count <= 500, !raw.name.isEmpty else { return nil }
+        let pattern = #"^\s*([0-9]+(?:\.[0-9]+)?)\s*(mg|mcg|ug|microgram|g)\s*/\s*([0-9]+(?:\.[0-9]+)?)?\s*(mL)?\s*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: strength, range: NSRange(strength.startIndex..., in: strength)) else { return nil }
+        func group(_ n: Int) -> String { Range(match.range(at: n), in: strength).map { String(strength[$0]) } ?? "" }
+        guard let amount = Decimal(string: group(1)), amount > 0 else { return nil }
+        let perText = group(3)
+        let per = perText.isEmpty ? Decimal(1) : Decimal(string: perText)
+        guard let per, per > 0 else { return nil }
+        let unit: DoseUnit
+        switch group(2).lowercased() { case "mg": unit = .mg; case "g": unit = .g; default: unit = .microgram }
+        let productUnit: DoseUnit
+        if !group(4).isEmpty { productUnit = .mL }
+        else {
+            // NDC /1 means one discrete dosage unit, only when its actual dosage
+            // form is explicitly a tablet or capsule. Unknown forms stay unparsed.
+            guard !perText.isEmpty else { return nil }
+            let form = formulation.uppercased()
+            if form == "TABLET" || form.hasPrefix("TABLET,") { productUnit = .tablet }
+            else if form == "CAPSULE" || form.hasPrefix("CAPSULE,") { productUnit = .capsule }
+            else { return nil }
+        }
+        return Ingredient(id: "fda-name:" + raw.name.lowercased(), name: raw.name, amount: amount, unit: unit, per: per, productUnit: productUnit)
     }
 }
