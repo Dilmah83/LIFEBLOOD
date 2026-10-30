@@ -32,10 +32,15 @@ for name, test in [('Lifeblood', False), ('LifebloodTests', True)]:
         ref = obj(str(file.relative_to(root)), dict(isa='PBXFileReference', lastKnownFileType='sourcecode.swift', path=file.name, sourceTree='<group>'))
         files.append(ref)
         builds.append(obj('build:' + file.name, dict(isa='PBXBuildFile', fileRef=ref)))
+    resource_builds = []
+    if not test:
+        asset = obj('assets', dict(isa='PBXFileReference', lastKnownFileType='folder.assetcatalog', path='Assets.xcassets', sourceTree='<group>'))
+        files.append(asset)
+        resource_builds.append(obj('build:assets', dict(isa='PBXBuildFile', fileRef=asset)))
     groups.append(obj(name + 'group', dict(isa='PBXGroup', path=name, sourceTree='<group>', children=files)))
     product = obj(name + 'product', dict(isa='PBXFileReference', explicitFileType='wrapper.cfbundle' if test else 'wrapper.application', path=name + ('.xctest' if test else '.app'), sourceTree='BUILT_PRODUCTS_DIR'))
     products.append(product)
-    phases = [obj(name + 'sources', dict(isa='PBXSourcesBuildPhase', buildActionMask=2147483647, files=builds, runOnlyForDeploymentPostprocessing=0)), obj(name + 'frameworks', dict(isa='PBXFrameworksBuildPhase', buildActionMask=2147483647, files=[], runOnlyForDeploymentPostprocessing=0)), obj(name + 'resources', dict(isa='PBXResourcesBuildPhase', buildActionMask=2147483647, files=[], runOnlyForDeploymentPostprocessing=0))]
+    phases = [obj(name + 'sources', dict(isa='PBXSourcesBuildPhase', buildActionMask=2147483647, files=builds, runOnlyForDeploymentPostprocessing=0)), obj(name + 'frameworks', dict(isa='PBXFrameworksBuildPhase', buildActionMask=2147483647, files=[], runOnlyForDeploymentPostprocessing=0)), obj(name + 'resources', dict(isa='PBXResourcesBuildPhase', buildActionMask=2147483647, files=resource_builds, runOnlyForDeploymentPostprocessing=0))]
     settings = dict(PRODUCT_NAME='$(TARGET_NAME)', PRODUCT_BUNDLE_IDENTIFIER='au.lifeblood.' + ('tests' if test else 'tracker'), SWIFT_VERSION='5.0', IPHONEOS_DEPLOYMENT_TARGET='17.0', TARGETED_DEVICE_FAMILY='1', SDKROOT='iphoneos', CODE_SIGN_STYLE='Automatic', GENERATE_INFOPLIST_FILE='YES', ENABLE_TESTABILITY='YES')
     deps = []
     if test:
@@ -43,7 +48,7 @@ for name, test in [('Lifeblood', False), ('LifebloodTests', True)]:
         proxy = obj('proxy', dict(isa='PBXContainerItemProxy', containerPortal=uid('project'), proxyType=1, remoteGlobalIDString=uid('Lifebloodtarget'), remoteInfo='Lifeblood'))
         deps = [obj('testdep', dict(isa='PBXTargetDependency', target=uid('Lifebloodtarget'), targetProxy=proxy))]
     else:
-        settings.update(INFOPLIST_FILE='Info.plist', GENERATE_INFOPLIST_FILE='NO')
+        settings.update(INFOPLIST_FILE='Info.plist', GENERATE_INFOPLIST_FILE='NO', ASSETCATALOG_COMPILER_APPICON_NAME='AppIcon')
     targets.append(obj(name + 'target', dict(isa='PBXNativeTarget', name=name, productName=name, productReference=product, productType='com.apple.product-type.bundle.unit-test' if test else 'com.apple.product-type.application', buildConfigurationList=configs(name, settings), buildPhases=phases, buildRules=[], dependencies=deps)))
 prodgroup = obj('products', dict(isa='PBXGroup', name='Products', sourceTree='<group>', children=products))
 main = obj('main', dict(isa='PBXGroup', sourceTree='<group>', children=groups + [prodgroup]))
@@ -51,7 +56,7 @@ project = obj('project', dict(isa='PBXProject', attributes=dict(LastUpgradeCheck
 folder = root / 'Lifeblood.xcodeproj'
 folder.mkdir(exist_ok=True)
 (folder / 'project.pbxproj').write_text('// !$*UTF8*$!\n' + render(dict(archiveVersion=1, classes={}, objectVersion=56, objects=objects, rootObject=project)) + '\n')
-info = dict(CFBundleDevelopmentRegion='$(DEVELOPMENT_LANGUAGE)', CFBundleExecutable='$(EXECUTABLE_NAME)', CFBundleIdentifier='$(PRODUCT_BUNDLE_IDENTIFIER)', CFBundleInfoDictionaryVersion='6.0', CFBundleName='$(PRODUCT_NAME)', CFBundlePackageType='APPL', CFBundleShortVersionString='1.0', CFBundleVersion='1', CFBundleDisplayName='LIFEBLOOD', UILaunchScreen={}, UIApplicationSceneManifest={'UIApplicationSupportsMultipleScenes': False}, NSCalendarsFullAccessUsageDescription='Export reminders you choose to your calendar.', NSCameraUsageDescription='Photograph your prescription to recognise its text on this iPhone. Review all details before saving.', UISupportedInterfaceOrientations=['UIInterfaceOrientationPortrait'])
+info = dict(CFBundleDevelopmentRegion='$(DEVELOPMENT_LANGUAGE)', CFBundleExecutable='$(EXECUTABLE_NAME)', CFBundleIdentifier='$(PRODUCT_BUNDLE_IDENTIFIER)', CFBundleInfoDictionaryVersion='6.0', CFBundleName='$(PRODUCT_NAME)', CFBundlePackageType='APPL', CFBundleShortVersionString='1.0', CFBundleVersion='1', CFBundleDisplayName='LIFEBLOOD', UILaunchScreen={}, UIApplicationSceneManifest={'UIApplicationSupportsMultipleScenes': False}, NSCalendarsFullAccessUsageDescription='Export reminders you choose to your calendar.', NSCameraUsageDescription='Photograph a prescription or vitamin/supplement label to recognise its text on this iPhone. Review all details before saving.', UISupportedInterfaceOrientations=['UIInterfaceOrientationPortrait'])
 (root / 'Info.plist').write_bytes(plistlib.dumps(info))
 schemes = folder / 'xcshareddata' / 'xcschemes'
 schemes.mkdir(parents=True, exist_ok=True)

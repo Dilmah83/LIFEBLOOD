@@ -16,6 +16,9 @@ struct PrescriptionDraft: Identifiable, Equatable {
     var directions = ""
     var warnings: [String] = []
     var reviewed = false
+    var isSupplement = false
+    var labelIngredients: [Ingredient] = []
+    var servingDescription = ""
 }
 struct PrescriptionParseResult {
     var drafts: [PrescriptionDraft]

@@ -34,6 +34,10 @@ struct TodayView: View {
     @State private var scheduled: Date?
     var body: some View {
         List {
+            HStack(spacing: 12) {
+                Image("PillsLogo").resizable().scaledToFit().frame(width: 52, height: 52).clipShape(RoundedRectangle(cornerRadius: 12)).accessibilityHidden(true)
+                VStack(alignment: .leading) { Text("LIFEBLOOD").font(.headline); Text("Your medications, vitamins and supplements").font(.caption).foregroundStyle(.secondary) }
+            }
             DatePicker("Schedule date", selection: $day, displayedComponents: .date)
             Section("Scheduled intake") {
                 ForEach(store.archive.items.filter { $0.scheduled(on: day) }) { item in
@@ -64,7 +68,7 @@ struct TodayView: View {
                 }
             }
             Text("A scheduled dose is not counted as taken until you record it. Do not double up a missed dose without advice.").font(.footnote)
-        }.navigationTitle("LIFEBLOOD").sheet(item: $logItem) { item in NavigationStack { DoseLogView(item: item, scheduled: scheduled) } }
+        }.navigationTitle("Today").sheet(item: $logItem) { item in NavigationStack { DoseLogView(item: item, scheduled: scheduled) } }
     }
 }
 struct DoseLogView: View {
@@ -95,10 +99,12 @@ struct ItemsView: View {
     @EnvironmentObject var store: Store
     @State private var adding = false
     @State private var scanning = false
+    @State private var scanKind: LabelScanKind = .prescription
     var body: some View {
         List {
             Button { adding = true } label: { Label("Add medication or supplement", systemImage: "plus") }
-            Button { scanning = true } label: { Label("Scan prescription photo", systemImage: "doc.viewfinder") }
+            Button { scanKind = .prescription; scanning = true } label: { Label("Scan prescription photo", systemImage: "doc.viewfinder") }
+            Button { scanKind = .supplement; scanning = true } label: { Label("Scan vitamin or supplement label", systemImage: "camera.macro") }
             ForEach(store.archive.items) { item in
                 NavigationLink { ProductDetail(item: item) } label: {
                     VStack(alignment: .leading) {
@@ -112,7 +118,7 @@ struct ItemsView: View {
             }
         }.navigationTitle("Your products")
         .sheet(isPresented: $adding) { NavigationStack { SearchView() } }
-        .sheet(isPresented: $scanning) { NavigationStack { PrescriptionScannerView() } }
+        .sheet(isPresented: $scanning) { NavigationStack { PrescriptionScannerView(kind: scanKind) } }
     }
 }
 struct SearchView: View {
@@ -315,8 +321,8 @@ struct ProductEditor: View {
         let p = sourceProduct
         name = p?.brand ?? initialName; generic = p?.generic ?? ""; strength = p?.strength ?? ""; formulation = p?.formulation ?? ""; route = p?.route ?? "Oral"; ingredients = p?.ingredients ?? []; unit = p?.ingredients.first?.productUnit ?? .tablet
         if let scanned = prescriptionDraft, item == nil {
-            if p == nil { name = initialName.isEmpty ? scanned.name : initialName; strength = scanned.strength; formulation = scanned.formulation; route = scanned.route }
-            quantity = scanned.quantity; unit = scanned.unit; prn = scanned.asNeeded; instructions = scanned.directions
+            if p == nil { name = initialName.isEmpty ? scanned.name : initialName; strength = scanned.strength; formulation = scanned.formulation; route = scanned.route; ingredients = scanned.labelIngredients }
+            quantity = scanned.quantity; unit = scanned.unit; prn = scanned.asNeeded; instructions = [scanned.directions, scanned.servingDescription.isEmpty ? "" : "Label serving: " + scanned.servingDescription].filter { !$0.isEmpty }.joined(separator: "\n")
             times = ""; days = []
         }
         if let item { quantity = String(describing: item.quantity); unit = item.unit; times = item.times.joined(separator: ", "); days = Set(item.weekdays); start = item.start; hasEnd = item.end != nil; end = item.end ?? item.start; prn = item.asNeeded; instructions = item.instructions }

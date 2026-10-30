@@ -23,7 +23,7 @@
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Export reminders you choose to your calendar.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Photograph your prescription to recognise its text on this iPhone. Review all details before saving.</string>
+	<string>Photograph a prescription or vitamin/supplement label to recognise its text on this iPhone. Review all details before saving.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

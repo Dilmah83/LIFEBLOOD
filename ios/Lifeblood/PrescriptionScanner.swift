@@ -73,7 +73,13 @@ struct PrescriptionDocumentCamera: UIViewControllerRepresentable {
         }
     }
 }
+enum LabelScanKind: String, CaseIterable, Identifiable {
+    case prescription = "Prescription"
+    case supplement = "Vitamins / supplements"
+    var id: String { rawValue }
+}
 struct PrescriptionScannerView: View {
+    @State var kind: LabelScanKind = .prescription
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var camera = false
@@ -90,16 +96,20 @@ struct PrescriptionScannerView: View {
     @State private var cameraDenied = false
     var body: some View {
         List {
-            Section("Prescription photo") {
-                Text("Photograph the printed prescription or dispensing label. Text recognition runs on this iPhone. No photo, patient details or raw prescription text is uploaded or saved by LIFEBLOOD.")
+            Section("Photo recognition") {
+                Picker("Label type", selection: $kind) { ForEach(LabelScanKind.allCases) { Text($0.rawValue).tag($0) } }.disabled(reading)
+                if kind == .supplement {
+                    Text("Photograph one vitamin or supplement: include its product name, serving size and complete ingredient panel. Scan the front and back as separate pages if needed. Loose pills cannot be reliably identified from appearance.")
+                }
+                Text("Photograph the printed prescription, dispensing label or supplement panel. Text recognition runs on this iPhone. No photo, patient details or raw prescription text is uploaded or saved by LIFEBLOOD.")
                 Text("Recognition can misread names, decimal points and units. Handwriting and complex layouts may need manual entry. You must review each medicine before adding it.").font(.footnote)
                 if VNDocumentCameraViewController.isSupported {
-                    Button { Task { await openCamera() } } label: { Label("Take prescription photo", systemImage: "doc.viewfinder") }.disabled(reading)
+                    Button { Task { await openCamera() } } label: { Label("Take label photo", systemImage: "doc.viewfinder") }.disabled(reading)
                 } else { Text("Document camera is unavailable here. Choose an existing photo; the simulator has no document camera.").font(.footnote) }
                 if cameraDenied {
                     Link("Open Settings for camera permission", destination: URL(string: UIApplication.openSettingsURLString)!)
                 }
-                PhotosPicker(selection: $photo, matching: .images, photoLibrary: .shared()) { Label("Choose prescription photo", systemImage: "photo") }.disabled(reading)
+                PhotosPicker(selection: $photo, matching: .images, photoLibrary: .shared()) { Label("Choose label photo", systemImage: "photo") }.disabled(reading)
                 if reading { ProgressView("Reading on this iPhone…") }
                 if !message.isEmpty { Text(message).foregroundStyle(.secondary) }
             }
@@ -115,7 +125,7 @@ struct PrescriptionScannerView: View {
             }
             if !rawText.isEmpty {
                 Section("Private reference — not saved") {
-                    Toggle("Show prescription photo and recognised text", isOn: $showSensitivePreview)
+                    Toggle("Show photo and recognised text", isOn: $showSensitivePreview)
                     Text("This may show your name, address and other private details. Only fields you explicitly confirm are added to the tracker.").font(.caption)
                     if showSensitivePreview {
                         ForEach(Array(previews.enumerated()), id: \.offset) { _, data in
@@ -129,7 +139,7 @@ struct PrescriptionScannerView: View {
                 NavigationLink("Enter a product manually") { ProductEditor(item: nil, selected: nil) }
                 Text("For unclear directions or discrepancies, ask your pharmacist. Do not guess a dose or change prescribed treatment.").font(.footnote)
             }
-        }.navigationTitle("Scan prescription")
+        }.navigationTitle(kind == .supplement ? "Scan vitamin label" : "Scan prescription")
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { discard(); dismiss() } } }
         .privacySensitive()
         .interactiveDismissDisabled(reading)
@@ -140,6 +150,7 @@ struct PrescriptionScannerView: View {
                 switch result { case .success(let pages): read(pages); case .failure(let error): message = error.localizedDescription }
             }.ignoresSafeArea()
         }
+        .onChange(of: kind) { _, _ in discard() }
         .onChange(of: photo) { _, selected in
             guard let selected else { return }
             begin()
@@ -175,9 +186,9 @@ struct PrescriptionScannerView: View {
             do {
                 let result = try await withTaskCancellationHandler(operation: { try await operation.value }, onCancel: { operation.cancel() })
                 guard generation == request, !Task.isCancelled else { return }
-                let parsed = PrescriptionParser.parse(result.lines)
+                let parsed = kind == .supplement ? SupplementParser.parse(result.lines) : PrescriptionParser.parse(result.lines)
                 drafts = parsed.drafts; warnings = parsed.warnings; rawText = result.lines.map(\.text).joined(separator: "\n"); previews = result.previews
-                reading = false; message = "Found \(drafts.count) possible medicine line(s). Review each against the photo. Nothing has been saved."
+                reading = false; message = "Found \(drafts.count) possible product draft(s). Review each against the photo. Nothing has been saved."
             } catch { if generation == request { reading = false; message = error.localizedDescription } }
         }
     }
@@ -190,7 +201,7 @@ struct PrescriptionReviewView: View {
     var body: some View {
         Form {
             Section("Correct the recognised text") {
-                TextField("Medicine name only — no patient details", text: $draft.name).autocorrectionDisabled().textInputAutocapitalization(.never)
+                TextField("Exact product name only — no patient details", text: $draft.name).autocorrectionDisabled().textInputAutocapitalization(.never)
                 TextField("Strength exactly as written", text: $draft.strength)
                 TextField("Formulation", text: $draft.formulation)
                 TextField("Route — leave blank if unclear", text: $draft.route)
@@ -199,10 +210,20 @@ struct PrescriptionReviewView: View {
                 Toggle("As needed", isOn: $draft.asNeeded)
                 TextField("Directions — confirm against prescription", text: $draft.directions, axis: .vertical)
             }
+            if draft.isSupplement {
+                Section("Supplement serving and ingredients — unverified") {
+                    Text(draft.servingDescription.isEmpty ? "Serving size needs manual confirmation" : draft.servingDescription)
+                    if draft.labelIngredients.isEmpty { Text("Ingredient amounts could not be fully linked to a serving. Enter the complete ingredient panel manually in the next screen.") }
+                    ForEach(draft.labelIngredients) { ingredient in
+                        Text("\(ingredient.name): \(ingredient.amount) \(ingredient.unit.rawValue) per \(ingredient.per) \(ingredient.productUnit.rawValue)")
+                    }
+                    Text("Correct ingredient names, amounts and serving bases in the product editor before saving. IU stays in IU; equivalents are not converted.")
+                }
+            }
             Section("Check carefully") {
                 ForEach(draft.warnings, id: \.self) { Text($0) }
                 Text("Only the edited medicine name is used if you explicitly open product search and allow that search. Photo text and personal details are not sent. Ingredients and schedules are not guessed.")
-                Toggle("I compared these fields with the prescription", isOn: $confirmed)
+                Toggle("I compared these fields with the original label", isOn: $confirmed)
             }
             if confirmed && !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Section("Populate the tracker") {
@@ -211,7 +232,7 @@ struct PrescriptionReviewView: View {
                     Text("Check every ingredient and enter reminder times/days in the next screen. Saving is a separate explicit action.").font(.caption)
                 }
             }
-        }.navigationTitle("Review scanned medicine")
+        }.navigationTitle(draft.isSupplement ? "Review vitamin / supplement" : "Review scanned medicine")
         .onChange(of: draft) { _, _ in confirmed = false }
     }
 }

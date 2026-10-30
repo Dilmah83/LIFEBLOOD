@@ -2,6 +2,9 @@ name: Native iPhone checks
 on:
   pull_request:
   workflow_dispatch:
+concurrency:
+  group: native-iphone-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
