@@ -29,7 +29,7 @@ enum PrescriptionOCR {
         guard !pages.isEmpty, pages.count <= 5, pages.reduce(0, { $0 + $1.count }) <= 30_000_000 else { throw ScanError.tooLarge }
         var lines: [PrescriptionLine] = []
         var previews: [Data] = []
-        for data in pages {
+        for (page, data) in pages.enumerated() {
             try Task.checkCancellation()
             let image = try thumbnail(data)
             if let preview = UIImage(cgImage: image).jpegData(compressionQuality: 0.7) { previews.append(preview) }
@@ -42,7 +42,7 @@ enum PrescriptionOCR {
             // Preserve Vision's reading order. Multiple products are never assigned
             // directions by proximity, because columns/handwriting can be ambiguous.
             for observation in request.results ?? [] {
-                if let candidate = observation.topCandidates(1).first { lines.append(PrescriptionLine(text: candidate.string, confidence: candidate.confidence)) }
+                if let candidate = observation.topCandidates(1).first { lines.append(PrescriptionLine(text: candidate.string, confidence: candidate.confidence, minX: Double(observation.boundingBox.minX), midY: Double(observation.boundingBox.midY), height: Double(observation.boundingBox.height), page: page)) }
             }
         }
         guard !lines.isEmpty else { throw ScanError.noText }
@@ -80,10 +80,13 @@ enum LabelScanKind: String, CaseIterable, Identifiable {
 }
 struct PrescriptionScannerView: View {
     @State var kind: LabelScanKind = .prescription
+    @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var camera = false
     @State private var photo: PhotosPickerItem?
+    @State private var choosingPhoto = false
+    @State private var lastWasPhoto = false
     @State private var reading = false
     @State private var message = ""
     @State private var drafts: [PrescriptionDraft] = []
@@ -99,10 +102,10 @@ struct PrescriptionScannerView: View {
             Section("Photo recognition") {
                 Picker("Label type", selection: $kind) { ForEach(LabelScanKind.allCases) { Text($0.rawValue).tag($0) } }.disabled(reading)
                 if kind == .supplement {
-                    Text("Photograph one vitamin or supplement: include its product name, serving size and complete ingredient panel. Scan the front and back as separate pages if needed. Loose pills cannot be reliably identified from appearance.")
+                    Text("Photograph the BACK ingredient panel, including serving size and amounts. Fill the frame with “Each tablet contains” or “Supplement Facts”. A front/brand photo alone cannot provide the ingredients. Loose pills cannot be reliably identified from appearance.")
                 }
                 Text("Photograph the printed prescription, dispensing label or supplement panel. Text recognition runs on this iPhone. No photo, patient details or raw prescription text is uploaded or saved by LIFEBLOOD.")
-                Text("Recognition can misread names, decimal points and units. Handwriting and complex layouts may need manual entry. You must review each medicine before adding it.").font(.footnote)
+                Text("Check the result below, then Accept or Retake. Unread doses stay blank; reminders can be added later.").font(.footnote)
                 if VNDocumentCameraViewController.isSupported {
                     Button { Task { await openCamera() } } label: { Label("Take label photo", systemImage: "doc.viewfinder") }.disabled(reading)
                 } else { Text("Document camera is unavailable here. Choose an existing photo; the simulator has no document camera.").font(.footnote) }
@@ -115,11 +118,15 @@ struct PrescriptionScannerView: View {
             }
             if !drafts.isEmpty || !warnings.isEmpty {
                 Section("Review before adding") {
-                    ForEach(warnings, id: \.self) { Text($0) }
+                    if drafts.isEmpty { ForEach(warnings, id: \.self) { Text($0) } }
                     ForEach(drafts) { draft in
-                        NavigationLink { PrescriptionReviewView(draft: draft) } label: {
-                            VStack(alignment: .leading) { Text(draft.name).font(.headline); Text(draft.strength.isEmpty ? "Strength needs entry" : draft.strength).font(.caption) }
-                        }
+                        QuickPhotoReview(draft: draft) { accepted in
+                            store.upsert(accepted)
+                            if store.error == nil {
+                                drafts.removeAll { $0.id == draft.id }
+                                if drafts.isEmpty { discard(); dismiss() }
+                            }
+                        } retake: { retakePhoto() }
                     }
                 }
             }
@@ -147,12 +154,14 @@ struct PrescriptionScannerView: View {
             PrescriptionDocumentCamera { result in
                 camera = false
                 guard let result else { return }
-                switch result { case .success(let pages): read(pages); case .failure(let error): message = error.localizedDescription }
+                switch result { case .success(let pages): lastWasPhoto = false; read(pages); case .failure(let error): message = error.localizedDescription }
             }.ignoresSafeArea()
         }
+        .photosPicker(isPresented: $choosingPhoto, selection: $photo, matching: .images)
         .onChange(of: kind) { _, _ in discard() }
         .onChange(of: photo) { _, selected in
             guard let selected else { return }
+            lastWasPhoto = true
             begin()
             let request = generation
             worker = Task { @MainActor in
@@ -166,6 +175,11 @@ struct PrescriptionScannerView: View {
         }
         .onChange(of: scenePhase) { _, phase in if phase != .active { showSensitivePreview = false } }
         // Navigation to review keeps the scan in memory; closing the sheet destroys it.
+    }
+    @MainActor private func retakePhoto() {
+        discard()
+        if lastWasPhoto || !VNDocumentCameraViewController.isSupported { choosingPhoto = true }
+        else { Task { await openCamera() } }
     }
     @MainActor private func openCamera() async {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
@@ -193,46 +207,4 @@ struct PrescriptionScannerView: View {
         }
     }
     @MainActor private func discard() { worker?.cancel(); generation = UUID(); reading = false; drafts = []; warnings = []; rawText = ""; previews = []; photo = nil }
-}
-struct PrescriptionReviewView: View {
-    @State var draft: PrescriptionDraft
-    @State private var confirmed = false
-    var reviewedDraft: PrescriptionDraft { var copy = draft; copy.reviewed = true; return copy }
-    var body: some View {
-        Form {
-            Section("Correct the recognised text") {
-                TextField("Exact product name only — no patient details", text: $draft.name).autocorrectionDisabled().textInputAutocapitalization(.never)
-                TextField("Strength exactly as written", text: $draft.strength)
-                TextField("Formulation", text: $draft.formulation)
-                TextField("Route — leave blank if unclear", text: $draft.route)
-                TextField("Quantity per dose — leave blank if unclear", text: $draft.quantity).keyboardType(.decimalPad)
-                Picker("Dose unit", selection: $draft.unit) { ForEach(DoseUnit.allCases) { Text($0.rawValue).tag($0) } }
-                Toggle("As needed", isOn: $draft.asNeeded)
-                TextField("Directions — confirm against prescription", text: $draft.directions, axis: .vertical)
-            }
-            if draft.isSupplement {
-                Section("Supplement serving and ingredients — unverified") {
-                    Text(draft.servingDescription.isEmpty ? "Serving size needs manual confirmation" : draft.servingDescription)
-                    if draft.labelIngredients.isEmpty { Text("Ingredient amounts could not be fully linked to a serving. Enter the complete ingredient panel manually in the next screen.") }
-                    ForEach(draft.labelIngredients) { ingredient in
-                        Text("\(ingredient.name): \(ingredient.amount) \(ingredient.unit.rawValue) per \(ingredient.per) \(ingredient.productUnit.rawValue)")
-                    }
-                    Text("Correct ingredient names, amounts and serving bases in the product editor before saving. IU stays in IU; equivalents are not converted.")
-                }
-            }
-            Section("Check carefully") {
-                ForEach(draft.warnings, id: \.self) { Text($0) }
-                Text("Only the edited medicine name is used if you explicitly open product search and allow that search. Photo text and personal details are not sent. Ingredients and schedules are not guessed.")
-                Toggle("I compared these fields with the original label", isOn: $confirmed)
-            }
-            if confirmed && !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Section("Populate the tracker") {
-                    NavigationLink("Confirm a matching product first") { SearchView(initialQuery: draft.name, prescriptionDraft: reviewedDraft) }
-                    NavigationLink("Continue with unverified manual product") { ProductEditor(item: nil, selected: nil, prescriptionDraft: reviewedDraft) }
-                    Text("Check every ingredient and enter reminder times/days in the next screen. Saving is a separate explicit action.").font(.caption)
-                }
-            }
-        }.navigationTitle(draft.isSupplement ? "Review vitamin / supplement" : "Review scanned medicine")
-        .onChange(of: draft) { _, _ in confirmed = false }
-    }
 }

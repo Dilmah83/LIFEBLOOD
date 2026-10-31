@@ -7,7 +7,7 @@ enum SupplementParser {
         guard input.count <= 500, input.reduce(0, { $0 + $1.text.count }) <= 40_000 else {
             return .init(drafts: [], warnings: ["Too much text. Photograph one supplement label at a time."])
         }
-        let lines = input.map { PrescriptionLine(text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines), confidence: $0.confidence) }.filter { !$0.text.isEmpty }
+        let lines = LabelRows.assemble(input).map { PrescriptionLine(text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines), confidence: $0.confidence) }.filter { !$0.text.isEmpty }
         guard !lines.isEmpty else { return .init(drafts: [], warnings: ["No readable label. Photograph the product name and ingredient/serving panel; a loose pill cannot be reliably identified by appearance."]) }
         func has(_ pattern: String, _ text: String) -> Bool { !PrescriptionParser.matches(pattern, in: text).isEmpty }
         let servingPattern = #"(?:serving size\s*:?\s*|amounts? per\s+|ingredients per\s+)([0-9]+(?:\.[0-9]+)?)\s*(tablets?|capsules?|softgels?|mL)\b"#
@@ -17,7 +17,7 @@ enum SupplementParser {
         var warnings = ["Label recognition is unverified. Compare every ingredient, amount and serving size with the original pack before saving.", "Read the bottle/pack label, not the pill's colour or shape. Appearance does not reliably identify a vitamin or its strength.", "Ingredient synonyms, chemical forms and equivalent amounts require confirmation. No IU-to-mass or salt-to-elemental conversion is made."]
         var candidates: [(Decimal, DoseUnit, Int, String)] = []
         for (index, line) in lines.enumerated() where line.confidence >= 0.85 {
-            let each = PrescriptionParser.matches(#"\beach\s+(?:hard\s+|soft\s+)?(?:tablet|capsule|softgel)\s+contains\b"#, in: line.text).first
+            let each = PrescriptionParser.matches(#"\beach\s+(?:(?:hard|soft|film[- ]coated|coated|uncoated|vegetable|vegetarian)\s+)*(?:tablet|capsule|softgel)\s+contains\b"#, in: line.text).first
             let explicit = PrescriptionParser.matches(servingPattern, in: line.text).first
             if let each {
                 let unit: DoseUnit = has(#"\btablet\b"#, each) ? .tablet : .capsule
@@ -44,7 +44,7 @@ enum SupplementParser {
         if let basis, let start = basisIndex {
             for line in lines.dropFirst(start) {
                 if has(#"^(?:other ingredients|inactive ingredients|excipients|directions|dosage|warnings?|caution|storage)\b"#, line.text) { break }
-                let row = line.text.replacingOccurrences(of: #"^each\s+(?:hard\s+|soft\s+)?(?:tablet|capsule|softgel)\s+contains\s*:?\s*"#, with: "", options: [.regularExpression, .caseInsensitive])
+                let row = line.text.replacingOccurrences(of: #"^each\s+(?:(?:hard|soft|film[- ]coated|coated|uncoated|vegetable|vegetarian)\s+)*(?:tablet|capsule|softgel)\s+contains\s*:?\s*"#, with: "", options: [.regularExpression, .caseInsensitive])
                 let amounts = PrescriptionParser.matches(amountPattern, in: row)
                 if amounts.isEmpty {
                     if !row.isEmpty && !has(headerPattern, row) && !has(#"^(?:[†*%]|daily value|percent daily)"#, row) { skipped.append(row) }
@@ -82,7 +82,11 @@ enum SupplementParser {
             let parsed = PrescriptionParser.parse([PrescriptionLine(text: "Medicine: Supplement label", confidence: 1), PrescriptionLine(text: line.text.replacingOccurrences(of: #"^adults?\s*:?\s*"#, with: "", options: [.regularExpression, .caseInsensitive]), confidence: line.confidence)])
             if let directions = parsed.drafts.first { draft.quantity = directions.quantity; draft.directions = directions.directions; draft.asNeeded = directions.asNeeded; if !directions.quantity.isEmpty { draft.unit = directions.unit } }
         }
-        if name.isEmpty { warnings.append("Product name was not clear. Enter the exact brand and product name before continuing.") }
+        if draft.name.isEmpty && !draft.labelIngredients.isEmpty {
+            draft.name = draft.labelIngredients.count == 1 ? draft.labelIngredients[0].name : "Supplement (\(draft.labelIngredients.count) ingredients)"
+            warnings.append("Brand not read. Saved name will describe the ingredient panel until you edit it.")
+        }
+        if draft.name.isEmpty { warnings.append("Product name was not clear. Enter the exact brand and product name before continuing.") }
         draft.strength = draft.labelIngredients.map { "\($0.name): \($0.amount) \($0.unit.rawValue) per \($0.per) \($0.productUnit.rawValue)" }.joined(separator: "; ")
         draft.warnings = warnings + ["Enter the dose and reminder schedule explicitly. The label's serving size is not automatically a recommended dose for you."]
         return .init(drafts: [draft], warnings: ["One supplement label draft created. Review all fields; nothing has been saved."])

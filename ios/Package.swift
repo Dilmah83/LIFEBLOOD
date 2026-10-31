@@ -7,7 +7,7 @@ let package = Package(
     name: "PrescriptionCore",
     products: [.library(name: "PrescriptionCore", targets: ["PrescriptionCore"])],
     targets: [
-        .target(name: "PrescriptionCore", path: "Lifeblood", exclude: ["LifebloodApp.swift", "ProductService.swift", "SafetyEngine.swift", "Store.swift", "PrescriptionScanner.swift", "Assets.xcassets"], sources: ["Models.swift", "PrescriptionParser.swift", "SupplementParser.swift"]),
-        .testTarget(name: "PrescriptionCoreTests", dependencies: ["PrescriptionCore"], path: "LifebloodTests", exclude: ["SafetyTests.swift", "ProviderTests.swift"], sources: ["PrescriptionTests.swift", "SupplementTests.swift"])
+        .target(name: "PrescriptionCore", path: "Lifeblood", exclude: ["LifebloodApp.swift", "ProductService.swift", "SafetyEngine.swift", "Store.swift", "PrescriptionScanner.swift", "QuickPhotoReview.swift", "Assets.xcassets"], sources: ["Models.swift", "PrescriptionParser.swift", "SupplementParser.swift", "PhotoImport.swift", "MedicineSearch.swift"]),
+        .testTarget(name: "PrescriptionCoreTests", dependencies: ["PrescriptionCore"], path: "LifebloodTests", exclude: ["SafetyTests.swift", "ProviderTests.swift"], sources: ["PrescriptionTests.swift", "SupplementTests.swift", "QuickImportTests.swift"])
     ]
 )

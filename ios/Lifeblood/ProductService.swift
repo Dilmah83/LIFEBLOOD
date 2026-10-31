@@ -4,6 +4,7 @@ import Foundation
 // product data; search transmits only the query, never a patient profile or regimen.
 struct ProductService {
     var configuration: URLSessionConfiguration = .ephemeral
+    var useCache = false
     enum LookupError: LocalizedError {
         case unavailable(String)
         var errorDescription: String? { if case .unavailable(let message) = self { return message }; return nil }
@@ -21,7 +22,11 @@ struct ProductService {
     }
     func search(_ query: String, endpoint: String) async throws -> [Product] {
         if endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return try await searchPublicProducts(query)
+            let key = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if useCache, let cached = await ProductSearchCache.shared.get(key) { return cached }
+            let result = try await searchPublicProducts(query)
+            if useCache && !result.isEmpty { await ProductSearchCache.shared.put(key, products: result) }
+            return result
         }
         guard let base = URL(string: endpoint), base.scheme == "https", base.host != nil, base.user == nil, base.password == nil else {
             throw LookupError.unavailable("No secure product provider configured. Australian product research and autocomplete are unavailable. Manual entry remains unverified.")
@@ -106,25 +111,27 @@ extension ProductService {
         let name: String
         let strength: String?
     }
-    func searchPublicProducts(_ query: String) async throws -> [Product] {
-        let name = String(query.prefix(120)).unicodeScalars.map { scalar -> String in
-            CharacterSet.alphanumerics.contains(scalar) || scalar.value == 45 || scalar.value == 32 ? String(scalar) : " "
-        }.joined().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        guard name.count >= 2 else { throw LookupError.unavailable("Enter at least two letters or numbers of the brand or generic name.") }
+    func searchPublicProducts(_ query: String, generic: Bool = false, allowSynonym: Bool = true) async throws -> [Product] {
+        let plan = MedicineSearch(query)
+        guard plan.name.count >= 2 else { throw LookupError.unavailable("Enter at least two letters of the brand or generic name.") }
         var url = URLComponents(string: "https://api.fda.gov/drug/ndc.json")!
-        url.queryItems = [URLQueryItem(name: "search", value: "brand_name:\"\(name)\" OR generic_name:\"\(name)\""), URLQueryItem(name: "limit", value: "20")]
+        url.queryItems = [URLQueryItem(name: "search", value: plan.expression(generic: generic)), URLQueryItem(name: "limit", value: "50")]
         var request = URLRequest(url: url.url!); request.timeoutInterval = 15; request.cachePolicy = .reloadIgnoringLocalCacheData
         let session = URLSession(configuration: configuration, delegate: RejectRedirects(), delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw LookupError.unavailable("Could not connect to the public product directory. Try again or enter manually.") }
-        if http.statusCode == 404 { return [] }
+        if http.statusCode == 404 {
+            if !generic { return try await searchPublicProducts(query, generic: true, allowSynonym: allowSynonym) }
+            if allowSynonym { return try await searchSynonym(plan) }
+            return []
+        }
         guard http.statusCode == 200 else {
             throw LookupError.unavailable(http.statusCode == 429 ? "The FDA product directory is rate limited. Try again shortly or enter manually." : "The FDA product directory is unavailable. Try again or enter manually.")
         }
         guard data.count < 2_000_000 else { throw LookupError.unavailable("Product response was too large. Refine your search.") }
         let rows = try JSONDecoder().decode(NDCDirectory.self, from: data).results
-        guard rows.count <= 20 else { throw LookupError.unavailable("Too many results. Refine your search.") }
+        guard rows.count <= 100 else { throw LookupError.unavailable("Too many results. Refine your search.") }
         var seen = Set<String>()
         let products: [Product] = rows.compactMap { row in
             guard row.finished == true, let ndc = row.product_ndc, !ndc.isEmpty, seen.insert(ndc).inserted,
@@ -142,7 +149,8 @@ extension ProductService {
             return Product(id: "fda-ndc:" + ndc, brand: brand, generic: row.generic_name ?? "Not supplied", strength: strengths.isEmpty ? "Strength not supplied" : strengths, formulation: formulation, route: routes.joined(separator: ", "), ingredients: complete ? parsed : [], verified: false, sources: [EvidenceSource(id: "fda-ndc:" + ndc, title: "US FDA National Drug Code directory — " + ndc, url: sourceURL.url!, checked: Date(), jurisdiction: "US")], missing: missing)
         }
         try products.forEach(Self.validate)
-        return products
+        if products.isEmpty && !generic { return try await searchPublicProducts(query, generic: true, allowSynonym: allowSynonym) }
+        return Array(products.sorted { plan.rank($0) > plan.rank($1) }.prefix(30))
     }
     static func directoryIngredient(_ raw: NDCIngredient, formulation: String) -> Ingredient? {
         // Only explicit mass/unit or mass/volume expressions are recognised. No IU
@@ -170,5 +178,34 @@ extension ProductService {
             else { return nil }
         }
         return Ingredient(id: "fda-name:" + raw.name.lowercased(), name: raw.name, amount: amount, unit: unit, per: per, productUnit: productUnit)
+    }
+}
+
+extension ProductService {
+    struct RxIDs: Decodable { struct Group: Decodable { let rxnormId: [String]? }; let idGroup: Group }
+    struct RxProperties: Decodable { struct Properties: Decodable { let name: String; let tty: String }; let properties: Properties }
+    func searchSynonym(_ plan: MedicineSearch) async throws -> [Product] {
+        var components = URLComponents(string: "https://rxnav.nlm.nih.gov/REST/rxcui.json")!
+        components.queryItems = [URLQueryItem(name: "name", value: plan.name), URLQueryItem(name: "search", value: "0")]
+        let session = URLSession(configuration: configuration, delegate: RejectRedirects(), delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        do {
+            let (data, response) = try await session.data(for: URLRequest(url: components.url!, timeoutInterval: 8))
+            guard (response as? HTTPURLResponse)?.statusCode == 200, data.count < 200_000,
+                  let id = try JSONDecoder().decode(RxIDs.self, from: data).idGroup.rxnormId?.first,
+                  id.allSatisfy(\.isNumber) else { return [] }
+            let (properties, result) = try await session.data(for: URLRequest(url: URL(string: "https://rxnav.nlm.nih.gov/REST/rxcui/\(id)/properties.json")!, timeoutInterval: 8))
+            guard (result as? HTTPURLResponse)?.statusCode == 200, properties.count < 200_000 else { return [] }
+            let value = try JSONDecoder().decode(RxProperties.self, from: properties).properties
+            // Only exact terminology matches for ingredients, never approximate brand substitution.
+            guard ["IN", "PIN"].contains(value.tty), value.name.lowercased() != plan.name else { return [] }
+            var products = try await searchPublicProducts(value.name + " " + plan.strength, allowSynonym: false)
+            for index in products.indices {
+                products[index].missing.append("Search term \(plan.name) matched the NLM ingredient name \(value.name). These are US reference products, not confirmation of an Australian brand.")
+                products[index].sources.append(EvidenceSource(id: "rxnorm:" + id, title: "NLM RxNorm ingredient terminology", url: URL(string: "https://rxnav.nlm.nih.gov/REST/rxcui/\(id)/properties.json")!, checked: Date(), jurisdiction: "US"))
+            }
+            return products
+        } catch is CancellationError { throw CancellationError() }
+        catch { return [] } // Optional terminology unavailable; never fabricate matches.
     }
 }

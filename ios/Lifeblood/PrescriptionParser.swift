@@ -3,6 +3,10 @@ import Foundation
 struct PrescriptionLine: Sendable {
     let text: String
     let confidence: Float
+    var minX: Double? = nil
+    var midY: Double? = nil
+    var height: Double? = nil
+    var page: Int = 0
 }
 struct PrescriptionDraft: Identifiable, Equatable {
     let id = UUID()

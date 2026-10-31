@@ -108,11 +108,13 @@ final class ProviderTests: XCTestCase {
         }
         let products = try await service.search("Fixture Brand", endpoint: "")
         XCTAssertEqual(products.count, 2)
-        XCTAssertEqual(products[0].ingredients.count, 2)
-        XCTAssertEqual(products[0].ingredients[0].amount, 500)
-        XCTAssertEqual(products[0].ingredients[0].productUnit, .tablet)
-        XCTAssertEqual(products[1].ingredients[0].productUnit, .mL)
-        XCTAssertEqual(products[1].ingredients[0].delivered(quantity: Decimal(string: "0.5")!, unit: .mL), 5)
+        let tablet = try XCTUnwrap(products.first { $0.id == "fda-ndc:test-tablet" })
+        let injection = try XCTUnwrap(products.first { $0.id == "fda-ndc:test-injection" })
+        XCTAssertEqual(tablet.ingredients.count, 2)
+        XCTAssertEqual(tablet.ingredients[0].amount, 500)
+        XCTAssertEqual(tablet.ingredients[0].productUnit, .tablet)
+        XCTAssertEqual(injection.ingredients[0].productUnit, .mL)
+        XCTAssertEqual(injection.ingredients[0].delivered(quantity: Decimal(string: "0.5")!, unit: .mL), 5)
         XCTAssertNotEqual(products[0].id, products[1].id)
         XCTAssertTrue(products.allSatisfy { !$0.verified && $0.sources.first?.jurisdiction == "US" })
     }
@@ -147,6 +149,32 @@ final class ProviderTests: XCTestCase {
         let micrograms = ProductService.directoryIngredient(.init(name: "Fixture", strength: "250 mcg/1"), formulation: "CAPSULE")
         XCTAssertEqual(micrograms?.unit, .microgram)
         XCTAssertEqual(micrograms?.productUnit, .capsule)
+    }
+
+    func testExactIngredientSynonymCanFindAustralianGenericNameWithoutBrandGuessing() async throws {
+        FixtureProtocol.reply = { request in
+            let url = request.url!
+            if url.host == "api.fda.gov" {
+                if url.query?.contains("paracetamol") == true { return (404, Data()) }
+                return (200, Data(#"{"results":[{"finished":true,"product_ndc":"fixture","brand_name":"Fixture reference","generic_name":"acetaminophen","dosage_form":"TABLET","route":["ORAL"],"active_ingredients":[{"name":"ACETAMINOPHEN","strength":"500 mg/1"}]}]}"#.utf8))
+            }
+            if url.path.hasSuffix("rxcui.json") { return (200, Data(#"{"idGroup":{"rxnormId":["161"]}}"#.utf8)) }
+            return (200, Data(#"{"properties":{"name":"acetaminophen","tty":"IN"}}"#.utf8))
+        }
+        let results = try await service.search("paracetamol", endpoint: "")
+        XCTAssertEqual(results.count, 1)
+        XCTAssertTrue(results[0].sources.contains { $0.id == "rxnorm:161" })
+        XCTAssertTrue(results[0].missing.contains { $0.contains("not confirmation of an Australian brand") })
+        XCTAssertFalse(results[0].verified)
+    }
+    func testTerminologyDoesNotSubstituteAnotherBrand() async throws {
+        FixtureProtocol.reply = { request in
+            if request.url?.host == "api.fda.gov" { return (404, Data()) }
+            if request.url!.path.hasSuffix("rxcui.json") { return (200, Data(#"{"idGroup":{"rxnormId":["123"]}}"#.utf8)) }
+            return (200, Data(#"{"properties":{"name":"Different brand","tty":"BN"}}"#.utf8))
+        }
+        let results = try await service.search("Unknown brand", endpoint: "")
+        XCTAssertTrue(results.isEmpty)
     }
 
 }

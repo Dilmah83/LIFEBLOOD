@@ -53,8 +53,8 @@ struct TodayView: View {
                     }
                 }
             }
-            Section("As-needed products") {
-                ForEach(store.archive.items.filter { $0.active(on: day) && $0.asNeeded }) { item in
+            Section("As-needed / unscheduled products") {
+                ForEach(store.archive.items.filter { $0.active(on: day) && ($0.asNeeded || $0.times.isEmpty) }) { item in
                     Button("Record \(item.product.brand)") { scheduled = nil; logItem = item }
                 }
             }
@@ -117,11 +117,12 @@ struct ItemsView: View {
                 }
             }
         }.navigationTitle("Your products")
-        .sheet(isPresented: $adding) { NavigationStack { SearchView() } }
+        .sheet(isPresented: $adding) { NavigationStack { SearchView(onAccepted: { adding = false }) } }
         .sheet(isPresented: $scanning) { NavigationStack { PrescriptionScannerView(kind: scanKind) } }
     }
 }
 struct SearchView: View {
+    var onAccepted: (() -> Void)? = nil
     var initialQuery = ""
     var prescriptionDraft: PrescriptionDraft? = nil
     @AppStorage("productEndpoint") private var endpoint = ""
@@ -137,23 +138,24 @@ struct SearchView: View {
     var body: some View {
         List {
             Section(usesPublicDirectory ? "Public product search — US directory" : "Australian medical provider") {
-                TextField("Brand or generic name", text: $query).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search).onSubmit { if consent { Task { await search() } } }
-                Toggle("Allow product-name searches", isOn: $consent)
-                Text("Only the search term is sent. Your identity, medication list and health profile are not sent. Provider details: \(usesPublicDirectory ? "US FDA public National Drug Code directory (api.fda.gov)" : endpoint)").font(.caption)
-                Button(searching ? "Searching…" : "Search products") { Task { await search() } }.disabled(!consent || query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
+                TextField("Brand or generic name", text: $query).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search).onSubmit { consent = true; Task { await search() } }
+                Button(searching ? "Searching…" : (consent ? "Search" : "Search — send product name")) { consent = true; Task { await search() } }.disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || searching)
+                Text(usesPublicDirectory ? "Search sends only this name to the US FDA and, for ingredient synonyms, NLM. Australian coverage is limited." : "Only this product name is sent to your configured provider.").font(.caption).foregroundStyle(.secondary)
                 if usesPublicDirectory {
-                    Text("US products only. Australian brands, ingredients and strengths can differ. Vitamins and supplements may not be listed. Confirm every detail against your own pack; results are not Australian product verification.").font(.footnote)
+                    DisclosureGroup("Coverage and privacy") {
+                        Text("US reference products can differ from Australian packs. Profile, dose history, photos and prescription text are not sent. Exact formulation and strength must match your pack.")
+                        Toggle("Automatic search while typing", isOn: $consent)
+                    }
                 }
-                if !consent { Text("Turn on Allow product-name searches above to search.").font(.footnote) }
                 Text(message).font(.footnote)
             }
             ForEach(results) { product in
-                NavigationLink { ConfirmationView(product: product, prescriptionDraft: prescriptionDraft) } label: { Text(product.display) }
+                NavigationLink { QuickProductReview(product: product, scan: prescriptionDraft, onAccepted: onAccepted) } label: { VStack(alignment: .leading) { Text(product.brand).font(.headline); Text(product.strength).font(.subheadline); Text(product.formulation + " · " + product.route).font(.caption).foregroundStyle(.secondary) } }
             }
             Section("No exact match?") {
                 NavigationLink("Enter manually — unverified") { ProductEditor(item: nil, selected: nil, initialName: query, prescriptionDraft: prescriptionDraft) }
                 Link("Australian PI and CMI search (TGA)", destination: URL(string: "https://www.tga.gov.au/resources/artg")!)
-                Link("Australian medicine information (Healthdirect)", destination: URL(string: "https://www.healthdirect.gov.au/medicines")!)
+                Link("Search Australian medicines (Healthdirect)", destination: australianSearchURL)
                 Text("Do not choose a brand match without confirming all ingredients, strength, formulation and route on the pack.")
             }
         }.navigationTitle("Find a product")
@@ -163,18 +165,23 @@ struct SearchView: View {
         .onChange(of: consent) { _, allowed in if !allowed { generation = UUID(); results = []; searching = false } }
         .task(id: signature + "|" + String(consent)) {
             guard consent, query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
-            do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
             guard !Task.isCancelled, !searching, lastSignature != signature else { return }
             await search()
         }
         .onDisappear { generation = UUID(); searching = false }
+    }
+    var australianSearchURL: URL {
+        var url = URLComponents(string: "https://www.healthdirect.gov.au/medicines")!
+        url.queryItems = [URLQueryItem(name: "search", value: query)]
+        return url.url!
     }
     @MainActor func search() async {
         guard consent, query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
         let request = UUID(); generation = request; searching = true; lastSignature = signature
         message = "Searching published product records…"
         do {
-            let products = try await ProductService().search(query, endpoint: endpoint)
+            let products = try await ProductService(useCache: true).search(query, endpoint: endpoint)
             guard generation == request else { return }
             results = products
             message = products.isEmpty ? "No product found in the directory checked. Australian-only products and supplements may be absent. Try the generic name, open the Australian sources below, or enter manually." : "Choose your exact product, strength and formulation. Different products with similar names remain separate."
