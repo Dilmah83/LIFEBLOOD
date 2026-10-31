@@ -33,7 +33,7 @@ enum SupplementParser {
         } else if !candidates.isEmpty { warnings.append("Conflicting serving/ingredient bases found. No ingredient quantities were populated; enter them manually after checking the pack.") }
         if basis == nil { warnings.append("No single explicit serving size or per-tablet/capsule basis was confirmed. Ingredient quantities remain blank rather than guessing a serving.") }
         let explicitName = lines.first { has(#"^(?:product|supplement)\s*:\s*\S"#, $0.text) }
-        let headerPattern = #"^(?:supplement facts|nutrition|active ingredients?|ingredients?|nutrients?|serving|amount|directions|dosage|warning|caution|storage|each|adults|children|aust|manufactured|distributed|contains|patient|address|DOB|batch|expiry|other ingredients|excipients)\b|^[0-9]+\s*(?:tablets?|capsules?|softgels?)\b"#
+        let headerPattern = #"^(?:supplement facts|nutrition|active ingredients?|ingredients?|nutrients?|serving|amount|directions|dosage|warning|caution|storage|each|adults|children|aust|manufactured|distributed|contains|patient|name|doctor|prescriber|medicare|phone|fax|address|DOB|batch|expiry|other ingredients|excipients)\b|^[0-9]+\s*(?:tablets?|capsules?|softgels?)\b"#
         let front = lines.prefix(basisIndex ?? min(lines.count, 3)).filter { !has(headerPattern, $0.text) && $0.text.count <= 120 && $0.text.rangeOfCharacter(from: .letters) != nil }.prefix(2).map(\.text)
         let name = explicitName?.text.replacingOccurrences(of: #"^(?:product|supplement)\s*:\s*"#, with: "", options: [.regularExpression, .caseInsensitive]) ?? front.joined(separator: " ")
         var draft = PrescriptionDraft(name: name)
@@ -48,7 +48,7 @@ enum SupplementParser {
                 let row = line.text.replacingOccurrences(of: #"^each\s+(?:(?:hard|soft|film[- ]coated|coated|uncoated|vegetable|vegetarian)\s+)*(?:tablet|capsule|softgel)\s+contains\s*:?\s*"#, with: "", options: [.regularExpression, .caseInsensitive])
                 let amounts = PrescriptionParser.matches(amountPattern, in: row)
                 if amounts.isEmpty {
-                    if !row.isEmpty && !has(headerPattern, row) && !has(#"^(?:[†*%]|daily value|percent daily)"#, row) { skipped.append(row) }
+                    if !row.isEmpty && !has(headerPattern, row) && !has(#"^(?:[†*%]|daily value|percent daily)"#, row) { skipped.append(row); panelRows.append(row) }
                     continue
                 }
                 if row.rangeOfCharacter(from: .letters) != nil && !has(headerPattern, row) { panelRows.append(row) }

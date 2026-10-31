@@ -42,6 +42,16 @@ final class QuickImportTests: XCTestCase {
         XCTAssertTrue(item.product.sections["Label information"]!.contains("magnesium 300 mg"))
         XCTAssertTrue(item.product.missing.contains { $0.contains("totals") })
     }
+    func testUnpairedPanelTextKeepsNamesAndAmountsWithoutInventingPairs() throws {
+        let lines = ["Each tablet contains:", "Vitamin C", "Vitamin D3", "500 mg", "25 micrograms", "Name: Private patient"].map { PrescriptionLine(text: $0, confidence: 1) }
+        let draft = try XCTUnwrap(SupplementParser.parse(lines).drafts.first)
+        XCTAssertTrue(draft.labelIngredients.isEmpty)
+        let item = try PhotoImport.item(from: draft)
+        let text = try XCTUnwrap(item.product.sections["Label information"])
+        XCTAssertTrue(text.contains("Vitamin C"))
+        XCTAssertTrue(text.contains("500 mg"))
+        XCTAssertFalse(text.contains("Private patient"))
+    }
     func testRangeOrOCRGarbageIsNotSilentlyParsedAsOneDose() {
         for text in ["1-2", "1/2", "1O", "0", "-1", "1 tablet"] { XCTAssertThrowsError(try PhotoImport.quantity(text)) }
         XCTAssertEqual(try PhotoImport.quantity("0.5"), Decimal(string: "0.5"))
