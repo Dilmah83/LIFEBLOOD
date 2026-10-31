@@ -71,6 +71,8 @@ final class QuickImportTests: XCTestCase {
     func testSearchKeepsReleaseFormAndRemovesQueryOperators() {
         let query = MedicineSearch("Metformin XR 500mg\" OR :")
         XCTAssertTrue(query.terms.contains("xr"))
+        XCTAssertEqual(query.releaseHint, "xr")
+        XCTAssertFalse(query.expression().contains("xr*"))
         XCTAssertFalse(query.expression().contains("\""))
         XCTAssertFalse(query.expression().contains(":*"))
     }
@@ -78,5 +80,7 @@ final class QuickImportTests: XCTestCase {
         func p(_ strength: String) -> Product { Product(id: strength, brand: "Metformin", generic: "metformin", strength: strength, formulation: "Tablet", route: "Oral", ingredients: [Ingredient(id: "m", name: "metformin", amount: 1, unit: .mg)]) }
         let query = MedicineSearch("metformin 500mg")
         XCTAssertGreaterThan(query.rank(p("500 mg")), query.rank(p("1000 mg")))
+        let five = MedicineSearch("metformin 5mg")
+        XCTAssertGreaterThan(five.rank(p("5 mg")), five.rank(p("25 mg")))
     }
 }
