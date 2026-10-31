@@ -1,0 +1,80 @@
+# Native LIFEBLOOD for iPhone
+
+Open `Lifeblood.xcodeproj` in Xcode 16 or newer, select the Lifeblood scheme and an iPhone simulator, then Run. For a physical iPhone, select your own signing team and unique bundle identifier. Minimum iOS 17. No third-party iOS dependencies. `python3 generate_project.py` regenerates the committed Xcode project after source additions; `project.yml` is an optional XcodeGen alternative.
+
+## Delivered behaviour
+
+SwiftUI tabs provide a daily schedule, actual-dose log (including as-needed doses and injection notes), editable product list, exact-product confirmation, source disclosure, safety findings, ingredient totals, optional profile and blood-test records, assessment prompts, full JSON backups and a shareable pharmacist summary. Native files use iOS complete file protection and atomic writes. Historical doses retain the composition recorded at that time. No server keys or AI-generated facts are present in the app.
+
+Mass units normalise to mg using decimal arithmetic. mL is never treated as mass. Ingredient delivery uses confirmed strength amount divided by strength basis, multiplied by the quantity actually taken. For example, 10 mg per 1 mL and a 0.5 mL dose yields 5 mg. Supplement serving sizes use the same explicit basis. Incompatible units are reported as missing, not guessed. IU stays separate. Weekly schedules remain weekly; scheduled totals exclude as-needed intake and actual totals include only logs. Food is not quantified, so totals are explicitly incomplete.
+
+Local safety checks compare canonical ingredient IDs (or exact, normalised manual names), identify duplicates across brands, retain contributing products, and flag missing, stale and conflicting information. Manual synonyms are not resolved. These checks do not establish clinical safety. A dose change is never advised.
+
+## Existing records and calendar
+
+1. In the existing browser app, Settings → Export all records (JSON). The browser's localStorage cannot be read directly by a native app.
+2. In an empty native tracker, Settings → Import existing LIFEBLOOD archive.
+3. Review imported records and confirm structured ingredients and amounts from original packs. Free-text doses are deliberately not parsed into guessed concentrations.
+4. Enable native notification permission explicitly. Native reminders preserve the imported times, weekdays, dates and discontinued status. A maximum of 64 pending iOS alerts is scheduled; the app shows the actual horizon and replenishes when opened.
+5. Existing browser calendar imports are untouched. Native Calendar export reconciles only native-marked events in the selected calendar and next 60 days. Review old imports to avoid duplicate alerts. Calendar export and notifications require device verification.
+
+The original browser JSON is retained byte-for-byte, including profile, reminder/privacy settings, deleted-item logs, skipped/not-taken entries, refill/prescriber information and symptom notes. Native taken-dose history imports identifiable taken records; other historical details remain in the exportable original archive, not all in native screens. This is a preservation path, not a complete field-for-field UI migration. Native notification text is private by default. Import refuses to overwrite a nonempty tracker. Do not clear browser storage until the import and backup have been verified.
+
+## Medical data and privacy
+
+Product search works without backend setup using the public US FDA National Drug Code directory. Search requires consent and sends only the entered product name. Results are explicitly US directory references, not Australian product verification or FDA approval. Unknown concentrations, percentage strengths and IU are not guessed; incomplete combinations retain their raw strengths and no partial totals are produced. Exact name/strength/formulation/route confirmation is required. A 600 ms typing pause triggers search; Search and the keyboard Search key also work. Settings optionally accepts a trusted HTTPS Australian backend URL, not an API key. If that configured provider fails, it is not silently replaced by FDA results. `ProductService` expects `GET /products?q=…&jurisdiction=AU`, returning exact structured products with ingredient identities, amounts, basis units, sources, checked dates and missing/conflicting information. Australian products sort first. Data is displayed as text, never HTML or executable instructions. There is no mock or AI fallback. Confirm the exact product before dose entry.
+
+Optional automatic clinical checks require separate consent. Only provider-resolved products, quantities, units, weekdays, times and as-needed flags are sent to `POST /check`; name, notes, profile, blood tests and actual logs are excluded. Any unverified or stale product blocks submission of a partial regimen. Results are invalidated on changes, validated for evidence and source links, and discarded if another check supersedes them. Missing patient details still limit personalised checking. Review the provider's privacy and licence terms before enabling.
+
+`../server/service.py` is a configurable gateway with no production medical data. It needs a licensed medical-provider adapter, HTTPS, appropriate deployment authentication and rate limiting. The public FDA NDC endpoint was checked live with Panadol. No licensed Australian/clinical provider is configured or claimed to have been verified live. Existing web FDA research remains US general label information and is not repurposed as an Australian product or interaction engine.
+
+## Unfinished clinical capabilities
+
+- Automatic AU product research remains dependent on a configured licensed adapter. The public US directory supports product-name search after a typing pause; Australian-only medicines and supplements may not be listed.
+- Comprehensive drug/supplement/food/alcohol/absorption and therapeutic-overlap checking requires the clinical provider. Gateway fixtures are tests, not medical facts.
+- No reviewed Australian/New Zealand reference-value dataset is bundled. Age/sex/pregnancy/form/scope-specific nutrient upper limits, dietary totals, medication maximum-dose comparisons and excess-intake alerts are not implemented. The UI states this rather than inventing thresholds.
+- “Vitamins to consider” offers cautious assessment prompts and a valid no-additional-supplement result. It does not interpret blood tests, diagnose deficiencies, prescribe doses or automatically add suggestions. Personalised, interaction-screened recommendations are not implemented.
+- No comprehensive clinical validation has occurred. Do not use this build as a substitute for pharmacist/prescriber assessment.
+
+## Validation
+
+`xcodebuild -project ios/Lifeblood.xcodeproj -scheme Lifeblood -destination 'platform=iOS Simulator,name=<installed iPhone>' CODE_SIGNING_ALLOWED=NO test` from repository root runs the XCTest suite. The macOS CI workflow chooses an installed iPhone automatically. The 26 native tests cover the fixture-backed search → exact product selection → dose → save → safety → source flow, HTTP failures/rate limits and incomplete regimen submission, as well as combinations, overlap, unit conversion, injection calculations, serving sizes, weekly/as-needed schedules, date bounds, unsupported coverage, stale/conflicting data, invalid sources, ambiguous formulations, missing profile data, recommendation duplication, failed provider configuration, lossless legacy retention and dose snapshots.
+
+On Linux, Swift/Xcode are unavailable. The previous macOS CI runs did not execute the native job (the runner job was cancelled while queued), so they do not establish a successful native build. Gateway tests and the existing browser regression suite run here; native XCTest and the full search → confirm → dose → save → safety → sources flow require the macOS CI or Xcode. On-device tests are still required for notification permission/delivery, Focus modes, background scheduling horizon, Calendar permission/export/re-export, protected file persistence and Share Sheet behaviour.
+
+
+## Prescription photo scanning
+
+Products → Scan prescription photo supports the on-device document camera (up to five pages) or a selected photo. Apple Vision performs accurate OCR locally with spelling correction disabled. Images are bounded/downsampled before recognition. No model/API key or server processing is used. Camera permission is explained in Info.plist; Photos uses the system picker rather than broad library access. A simulator can use a selected image, but camera testing needs a physical iPhone.
+
+The scan proposes editable medicine names, literal strengths, explicit formulations, and simple numeric tablet/capsule/mL dose directions. It does not identify ingredients, infer injection concentrations, translate IU, diagnose, interpret handwriting as certain, or invent schedules/dates. Mixed layouts, multiple medicines, low-confidence directions, tapering doses, ranges and fractions leave dose fields blank. No directions are assigned by proximity across medicines. eScript barcodes without readable medicine text require manual entry or a dispensing label.
+
+Review the photo and recognised text, correct each draft, and confirm it against the original. Then either search for an exact product (only the edited medicine name is sent after the existing search consent), or continue with an unverified manual product. Enter ingredients and reminder times/days explicitly. Saving remains a separate action; existing items, logs, reminders and Calendar records are unchanged until that action. A scanned manual record is marked unverified. A matched product's strength is shown alongside the scan for comparison; discrepancies require pharmacist review.
+
+The photo and full raw text stay transient in scanner view memory and are not stored in the Archive, logs, notes, backups or exports. Photos already in your library remain there. Only fields the user explicitly accepts in the editor become tracker records. Reference previews start hidden and hide again when the app becomes inactive. Do not include personal identifiers in the edited medicine-name or direction fields.
+
+Fifteen scan tests cover straightforward extraction, micrograms, combination names, injection volume versus strength, PRN, multi-product ambiguity, tapering/fractional doses, low confidence, personal headers, unreadable text, missing strengths, competing directions, size limits, invalid images and blank images. Thirteen parser cases passed in GitHub Actions against the actual production Swift code; they also run via `swift test --package-path ios` on Linux; the two Vision image tests require Xcode/iOS. Native camera permission/denial, cancellation, rotated/dim/handwritten photos, multi-page capture, background privacy, review → search/manual → save and final notification/Calendar behaviour need simulator/device verification. This feature is not clinically validated.
+
+
+## Pill icon and vitamin/supplement labels
+
+The app includes an original pill image as its opaque 1024×1024 Home Screen icon and Today logo. `Assets.xcassets` is included in the Resources phase and AppIcon is set in both generated and XcodeGen projects.
+
+Products → Scan vitamin or supplement label uses the same private on-device camera/photo OCR. Choose the supplement mode and photograph one product's front, ingredient panel and serving size. It recognises explicit “Each tablet/capsule contains” and numeric serving sizes such as “Serving size: 2 capsules”. Clear single-line ingredient amounts populate a single supplement draft with a shared serving basis; mg, g, micrograms and IU remain explicit. The serving size is not used as a recommended dose: enter the quantity you actually plan to take and your schedule separately.
+
+All drafts remain unverified. Compare every field against the original label, then edit ingredient names, amounts and bases in the product editor before explicitly saving. If ingredient rows are ambiguous, repeated, low-confidence, use unsupported equivalents (for example DFE/RAE), have unknown quantities, or use separated table columns, no partial ingredient list is presented as complete. Conflicting serving bases require manual entry. Percentage daily values, salt/elemental equivalents and IU are never used to invent conversions. Ingredient synonyms across different forms still require authoritative confirmation. Food intake and comprehensive clinical coverage remain incomplete.
+
+The feature reads packaging text; it cannot reliably identify a loose vitamin/pill, its active ingredients or strength from colour/shape, and does not pretend to do so. Photos and raw OCR text remain transient. Only explicitly reviewed fields become records. Eleven supplement parser tests cover multivitamin servings, Australian “each tablet” labels, IU, missing bases, equivalent forms, conflicting bases, separate columns, weak recognition, inactive ingredients, unrecognised/missing quantities and photos without readable labels. Physical camera and full recognition accuracy remain subject to device verification.
+
+
+## Faster photo acceptance and medicine search
+
+Photo entry now stays on one screen: capture/choose → check the read information → Accept or Retake. There is no mandatory product-search, product-confirmation, schedule-editor or second confirmation page. Optional corrections and recognition details expand in place. Accept creates a user-confirmed, unverified tracker entry immediately. A dose that was not read remains explicitly unknown (quantity zero for calculation, not a recorded dose); no reminders or daily frequency are invented. Unscheduled items are available for actual-dose recording in Today. Existing items/reminders/history are preserved.
+
+Supplement capture explicitly asks for the BACK ingredient panel and serving basis. Ingredients lead the review, and branding is secondary. A front/brand-only photo cannot be accepted as a composition. Ingredient-only panels can use an ingredient-based display name instead of requiring a brand. Same-page OCR boxes with matching row geometry can be assembled into ingredient/amount rows; different rows/pages and ambiguous multiple columns are not paired. Australian film-coated/vegetarian capsule qualifiers are supported. Missing doses do not block accepting readable ingredient information.
+
+Medicine search supports prefix tokens, separate strength filtering/ranking and generic fallback. Exact NLM RxNorm ingredient synonyms may resolve Australian versus US generic terminology (e.g. paracetamol/acetaminophen), with an explicit source and jurisdiction warning. Brand substitutions and approximate ingredient matching are not used. Public results cache in memory for ten minutes with original checked dates. Automatic search starts after a 300 ms pause once search consent is given; the first Search button explicitly authorises sending the product name. The UI shows results as name, strength and formulation; tapping one opens a compact Accept screen instead of another multi-page form. Australian Healthdirect search receives the entered query through an explicit link. Australian-only brands still require an Australian provider or photo/manual entry; the public US directory is not comprehensive Australian coverage.
+
+New regression tests exercise direct acceptance without guessed schedules, brand-only rejection, complete multivitamin retention, strict dose parsing, same-row ingredient alignment, no cross-row/page pairing, prefix/strength queries, relevant ranking and exact ingredient synonym versus brand substitution behaviour. These changes do not add clinical validation or comprehensive interaction/nutrient-limit data.
+
+Complex vitamin panels can be accepted as explicitly unverified label text on the same screen, without forcing manual transcription. They have no calculated ingredient totals until their complete quantities/forms are confirmed. Brand-only photos still require a picture of the ingredient panel; a brand is never used to guess contents.

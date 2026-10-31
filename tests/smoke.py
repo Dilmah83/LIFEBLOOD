@@ -36,6 +36,12 @@ with sync_playwright() as p:
     page.get_by_role('button', name='Find medicine information', exact=True).click()
     page.get_by_text('Could not connect.', exact=False).wait_for()
     page.get_by_role('button', name='Settings', exact=False).click()
+    original = page.evaluate('JSON.stringify(S)')
+    with page.expect_download() as archive_download:
+        page.get_by_role('button', name='Export all records (JSON)', exact=True).click()
+    exported = json.loads(Path(archive_download.value.path()).read_text())
+    assert exported == json.loads(original)
+    assert page.evaluate('JSON.stringify(S)') == original
     with page.expect_download() as download:
         page.get_by_role('button', name='Export to Calendar', exact=True).click()
     text = Path(download.value.path()).read_text()
@@ -58,3 +64,4 @@ with sync_playwright() as p:
     assert not errors, errors
     browser.close()
 print('PASS: medicine lookup, escaped labels, no results/offline, calendar download, privacy, recurrence, UTF-8 folding, empty export')
+

@@ -1,0 +1,45 @@
+name: Native iPhone checks
+on:
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: native-iphone-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Choose an installed iPhone simulator
+        run: |
+          xcrun simctl list devices available -j > /tmp/simulators.json
+          python3 - <<'PY'
+          import json, os
+          devices = json.load(open('/tmp/simulators.json'))['devices']
+          phone = next(d for ds in devices.values() for d in ds if d['name'].startswith('iPhone'))
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write('SIMULATOR_ID=' + phone['udid'] + '\n')
+          PY
+      - name: Build and test native app
+        run: xcodebuild -project ios/Lifeblood.xcodeproj -scheme Lifeblood -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -resultBundlePath TestResults CODE_SIGNING_ALLOWED=NO test
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcode-test-results
+          path: TestResults.xcresult
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate provider contract and failure modes
+        working-directory: server
+        run: python3 -m unittest -v
+  prescription-parser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test the actual Swift prescription parser
+        run: swift test --package-path ios

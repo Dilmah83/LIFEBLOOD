@@ -282,6 +282,7 @@ function vSettings(){
   <label>Notification text</label><select onchange="S.settings.private=this.value==='private';save()"><option value="private" ${S.settings.private?'selected':''}>Private (no medication names)</option><option value="full" ${!S.settings.private?'selected':''}>Show medication name</option></select>
   <div class="acts"><button class="btn ghost sm" onclick="askNotif()">Notification permission</button></div></div>
   <div class="card"><b>Phone alerts through Calendar</b><p class="mute">Creates repeating Calendar events with alerts at your reminder times. They work even when LIFEBLOOD is closed. Calendar can't tell if you took a dose, so still record doses here. Re-export after you change your schedule. Text follows your notification privacy setting above.</p><button class="btn red full" onclick="exportCal()">Export to Calendar</button><div id="calendarHelp" role="status" class="mute" style="margin-top:10px"></div></div>
+  <div class="card"><b>Backup and native iPhone migration</b><p class="mute">Export all existing records, dose history, settings and symptom notes as JSON. This file contains private health information; store it securely. Import it into an empty native LIFEBLOOD tracker.</p><button class="btn ghost full" onclick="exportArchive()">Export all records (JSON)</button></div>
   <div class="card"><b>Medication list</b><p class="mute">Create a printable summary for your GP or pharmacist.</p><button class="btn red full" onclick="go('summary')">Open medication list</button></div>
   <div class="card"><b>Profile</b><label>Name</label><input value="${esc(S.profile.name)}" onchange="S.profile.name=this.value;save()"><label>Allergies or cautions</label><textarea rows="2" onchange="S.profile.allergies=this.value;save()">${esc(S.profile.allergies)}</textarea></div>
   <div class="card"><b>Privacy</b><p class="mute">All data is stored only in this browser on this device. Medicine lookups send only the medicine name or active ingredient to the US FDA. Opening external medicine resources also sends your search term to that service. Your profile and dose history stay here. Clearing browser data or deleting the Home Screen app erases it, and there is no backup.</p><button class="btn ghost full" onclick="wipe()">Delete all my data</button></div>
@@ -336,6 +337,10 @@ function exportCal(){
   try{downloadCalendar(text);toast('Open the calendar file, then confirm Add / Import. Calendar controls the final confirmation.');}
   catch(e){toast('Calendar export failed. Try opening LIFEBLOOD in Safari or Chrome.');}
 }
+function exportArchive(){
+  const url=URL.createObjectURL(new Blob([JSON.stringify(S,null,2)],{type:'application/json'}));
+  const a=document.createElement('a');a.href=url;a.download='lifeblood-browser-archive.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
 function wipe(){if(confirm('Delete everything stored by LIFEBLOOD on this device? This cannot be undone.')){try{localStorage.removeItem('lifeblood_v1')}catch(e){}S={profile:null,items:[],logs:{},settings:{notify:true,private:true,theme:'auto'},symptoms:[]};tab='today';render()}}
 
 load();render();
@@ -343,3 +348,4 @@ if(!storageOK)setTimeout(()=>toast('Storage is unavailable here. Your data will 
 </script>
 </body>
 </html>
+
