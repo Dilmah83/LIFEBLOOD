@@ -33,7 +33,7 @@ enum SupplementParser {
         } else if !candidates.isEmpty { warnings.append("Conflicting serving/ingredient bases found. No ingredient quantities were populated; enter them manually after checking the pack.") }
         if basis == nil { warnings.append("No single explicit serving size or per-tablet/capsule basis was confirmed. Ingredient quantities remain blank rather than guessing a serving.") }
         let explicitName = lines.first { has(#"^(?:product|supplement)\s*:\s*\S"#, $0.text) }
-        let headerPattern = #"^(?:supplement facts|nutrition|active ingredients|ingredients|serving|amount|directions|dosage|warning|caution|storage|each|adults|children|aust|manufactured|distributed|contains|patient|address|DOB|batch|expiry|other ingredients|excipients)\b|^[0-9]+\s*(?:tablets?|capsules?|softgels?)\b"#
+        let headerPattern = #"^(?:supplement facts|nutrition|active ingredients?|ingredients?|nutrients?|serving|amount|directions|dosage|warning|caution|storage|each|adults|children|aust|manufactured|distributed|contains|patient|address|DOB|batch|expiry|other ingredients|excipients)\b|^[0-9]+\s*(?:tablets?|capsules?|softgels?)\b"#
         let front = lines.prefix(basisIndex ?? min(lines.count, 3)).filter { !has(headerPattern, $0.text) && $0.text.count <= 120 && $0.text.rangeOfCharacter(from: .letters) != nil }.prefix(2).map(\.text)
         let name = explicitName?.text.replacingOccurrences(of: #"^(?:product|supplement)\s*:\s*"#, with: "", options: [.regularExpression, .caseInsensitive]) ?? front.joined(separator: " ")
         var draft = PrescriptionDraft(name: name)
@@ -41,6 +41,7 @@ enum SupplementParser {
         if let basis { draft.unit = basis.1; draft.formulation = basis.1 == .tablet ? "Tablet" : (basis.1 == .capsule ? (servingText.lowercased().contains("softgel") ? "Softgel" : "Capsule") : "Liquid") }
         let amountPattern = #"\b[0-9]+(?:\.[0-9]+)?\s*(?:micrograms?|mcg|µg|μg|mg|g|IU)\b"#
         var skipped: [String] = []
+        var panelRows: [String] = []
         if let basis, let start = basisIndex {
             for line in lines.dropFirst(start) {
                 if has(#"^(?:other ingredients|inactive ingredients|excipients|directions|dosage|warnings?|caution|storage)\b"#, line.text) { break }
@@ -50,6 +51,7 @@ enum SupplementParser {
                     if !row.isEmpty && !has(headerPattern, row) && !has(#"^(?:[†*%]|daily value|percent daily)"#, row) { skipped.append(row) }
                     continue
                 }
+                if row.rangeOfCharacter(from: .letters) != nil && !has(headerPattern, row) { panelRows.append(row) }
                 if line.confidence < 0.85 || amounts.count != 1 || has(#"\b(?:equiv|equivalent|blend|total|RAE|DFE|NE|RE)\b"#, row) || row.contains("<") || row.contains(">") {
                     skipped.append(row); continue
                 }
@@ -72,6 +74,7 @@ enum SupplementParser {
             draft.labelIngredients = []
             warnings.append("Some ingredient rows were ambiguous, repeated or low-confidence. No partial ingredient list was populated. Enter the complete panel manually: " + skipped.prefix(10).joined(separator: "; "))
         }
+        draft.ingredientPanelText = Array(NSOrderedSet(array: panelRows).array.compactMap { $0 as? String })
         let amountOnly = lines.contains { has(#"^\s*[0-9]+(?:\.[0-9]+)?\s*(?:mg|g|mcg|µg|μg|micrograms?|IU)\b"#, $0.text) }
         if amountOnly {
             draft.labelIngredients = []
@@ -86,6 +89,7 @@ enum SupplementParser {
             draft.name = draft.labelIngredients.count == 1 ? draft.labelIngredients[0].name : "Supplement (\(draft.labelIngredients.count) ingredients)"
             warnings.append("Brand not read. Saved name will describe the ingredient panel until you edit it.")
         }
+        if draft.name.isEmpty && !draft.ingredientPanelText.isEmpty { draft.name = "Supplement label" }
         if draft.name.isEmpty { warnings.append("Product name was not clear. Enter the exact brand and product name before continuing.") }
         draft.strength = draft.labelIngredients.map { "\($0.name): \($0.amount) \($0.unit.rawValue) per \($0.per) \($0.productUnit.rawValue)" }.joined(separator: "; ")
         draft.warnings = warnings + ["Enter the dose and reminder schedule explicitly. The label's serving size is not automatically a recommended dose for you."]

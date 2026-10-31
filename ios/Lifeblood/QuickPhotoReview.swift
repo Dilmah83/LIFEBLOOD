@@ -6,7 +6,7 @@ struct QuickPhotoReview: View {
     let accept: (RegimenItem) -> Void
     let retake: () -> Void
     @State private var error = ""
-    private var needsPanel: Bool { draft.isSupplement && draft.labelIngredients.isEmpty && product == nil }
+    private var needsPanel: Bool { draft.isSupplement && draft.labelIngredients.isEmpty && draft.ingredientPanelText.isEmpty && product == nil }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(draft.isSupplement ? "Vitamin / supplement information" : (draft.name.isEmpty ? "Product name not read" : draft.name)).font(.headline)
@@ -16,6 +16,10 @@ struct QuickPhotoReview: View {
                 if needsPanel {
                     Label("Only branding or incomplete ingredients read. Photograph the ingredient panel and serving size on the BACK.", systemImage: "camera.viewfinder").foregroundStyle(.orange)
                 } else {
+                    if draft.labelIngredients.isEmpty {
+                        Text("Ingredient panel read as text. Amounts are not confirmed, so totals will be unavailable.").font(.caption).foregroundStyle(.orange)
+                        ForEach(draft.ingredientPanelText, id: \.self) { Text($0) }
+                    }
                     ForEach(draft.labelIngredients) { ingredient in
                         Text("\(ingredient.name) · \(ingredient.amount) \(ingredient.unit.rawValue) per \(ingredient.per) \(ingredient.productUnit.rawValue)")
                     }

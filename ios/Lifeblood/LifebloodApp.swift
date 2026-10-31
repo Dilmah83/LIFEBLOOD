@@ -215,6 +215,9 @@ struct ProductInformation: View {
                 Text("\(ingredient.name) [\(ingredient.form)] · \(ingredient.amount) \(ingredient.unit.rawValue) per \(ingredient.per) \(ingredient.productUnit.rawValue)")
             }
         }
+        if let label = product.sections["Label information"] {
+            DisclosureGroup("Accepted label information — unverified") { Text(label) }
+        }
         ForEach(ProductService.sectionNames, id: \.self) { name in
             DisclosureGroup(name) { Text(product.sections[name] ?? "Not supplied. Ask your pharmacist or check the current Australian PI/CMI.") }
         }

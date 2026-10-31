@@ -18,12 +18,16 @@ enum PhotoImport {
     static func item(from draft: PrescriptionDraft, product: Product? = nil) throws -> RegimenItem {
         let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw ImportError.invalid("No product name or readable ingredient was found. Retake the photo.") }
-        if draft.isSupplement && draft.labelIngredients.isEmpty && product == nil {
+        if draft.isSupplement && draft.labelIngredients.isEmpty && draft.ingredientPanelText.isEmpty && product == nil {
             throw ImportError.invalid("Photograph the ingredient panel and serving size on the back of the pack. A brand photo is not enough to identify the contents.")
         }
         var p = product ?? Product(id: "manual:" + UUID().uuidString, brand: name, generic: "", strength: draft.strength, formulation: draft.formulation, route: draft.route, ingredients: draft.labelIngredients)
         guard draft.labelIngredients.allSatisfy({ !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.amount > 0 && $0.per > 0 }) else { throw ImportError.invalid("Check the ingredient names, amounts and serving basis, or retake the panel.") }
         if product == nil { p.ingredients = draft.labelIngredients.map { value in var ingredient = value; ingredient.id = "manual:" + value.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(); return ingredient }; p.verified = false; p.missing = ["User-accepted photo text; product composition is not independently verified."] }
+        if product == nil && !draft.ingredientPanelText.isEmpty {
+            p.sections["Label information"] = draft.ingredientPanelText.joined(separator: "\n")
+            if draft.labelIngredients.isEmpty { p.missing.append("Ingredient panel saved as unverified label text only; ingredient totals and complete clinical checks are unavailable until confirmed.") }
+        }
         let amount = try quantity(draft.quantity)
         var item = RegimenItem(product: p)
         item.quantity = amount; item.unit = draft.unit
